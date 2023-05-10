@@ -1,4 +1,4 @@
-### load libraries### 
+## Load dependencies for this workflow
 library(Seurat)
 library(tidyverse)
 library(rtracklayer)
@@ -6,6 +6,10 @@ library(Biobase)
 library(reshape2)
 library(ggpubr)
 library(MuSiC)
+
+## Set variables
+### Working directory containing input data
+wd <- "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data" 
 
 ### get gene names from latest gencode annotation ### 
 gtf <- import("https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M29/gencode.vM29.annotation.gtf.gz")
@@ -82,8 +86,8 @@ rm(esc.counts, npc.counts, ss.seurat.filtered)
 
 ### prepare induced neuron dataset (bulk RNAseq) ### 
 # load and process induced neuron dataset
-dds <- readRDS("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/rds/DDS_DMSO_only.rds")
-gene.meta <- read_tsv("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/metadata/genes_metadata.tsv.gz")
+dds <- readRDS("rds/DDS_DMSO_only.rds")
+gene.meta <- read_tsv("metadata/genes_metadata.tsv.gz")
 gene.meta <- gene.meta %>%
     filter(gene_id %in% rownames(dds))
 iNs.bulk.counts <- counts(dds)
@@ -132,7 +136,7 @@ m.music.out.sum <- m.music.out %>% left_join(class_categories) %>%
     summarise(Prop = sum(Prop)) %>%
     filter(Method == "MuSiC")
 
-write_tsv(m.music.out.sum, "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/tables/MuSiC_DMSO_proportions.tsv")
+write_tsv(m.music.out.sum, "tables/MuSiC_DMSO_proportions.tsv")
 
 
 
