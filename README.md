@@ -1,4 +1,4 @@
-# A widespread role of alternative splicing coupled with nonsense-mediated decay in accelerating downregulation of non-neuronal genes in developing neurons
+# Alternative splicing coupled to nonsense-mediated decay coordinates downregulation of non-neuronal genes in developing neurons
 
 This repository contains the scripts used to generate the data
 presented in our manuscript. The codes for processing RNA-sequencing data
