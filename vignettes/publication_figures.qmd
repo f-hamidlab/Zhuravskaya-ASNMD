@@ -168,7 +168,7 @@ fig1c <- dat %>%
                        label.size = 2.5, hjust = .5, step.group.by = "Timepoint",
                        linetype = "dotted")
 
-fig1c
+
 ```
 
 
@@ -272,95 +272,46 @@ fig1d <- dat.tally %>%
                        step.group.by = "Timepoint",
                        linetype = "dotted") 
     
-fig1d
+
 
 ```
 
-
-
 ### Panel E
 
-Plotting the data in (D) as fold enrichment over non-NMD genes shows that the fraction of genes significantly upregulated by CHX among genes containing regulated AS-NMD events tends to grow during neurodevelopment. Consistent with (C), this increase is especially prominent for NS-CE-containing genes.
-
 ```{r}
-# set colours
-
-line.dot.colours <- c(`no-NMD` = "#b5b5b5", `NR-CE` = "#D65C74",
-                  `NS-CE` = "#3184BC", `NR-other`= "#C1A4B6", 
-                  `NS-other` = "#8BAEB7")
-
+fill.colours <- c(AA = "#d3cfbc", 
+                  AD= "#c1b9a7",
+                  RI = "#a59b84",
+                  CE = "#6b72a0")
 
 
 # load data
 cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
 
-
-# get unique gene list per time point and group genes by event type
-dat <- cds.event.time %>% 
-    arrange(gene_id, desc(factR.event), desc(ds.CHX.sig), desc(ASNMDtype)) %>% 
-    distinct(Timepoint, gene_id, .keep_all = TRUE)
-
-# retain genes with events responding to CHX or 
-# genes that contain no factR event (Control)
-dat <- dat %>% 
-    filter(ds.CHX.sig|is.na(ds.CHX.sig)) %>% 
-    replace_na(list(ds.CHX.sig=FALSE))
-
-# group genes by type of AS-NMD exons it contain
-dat <- dat %>% 
-    mutate(Type = ifelse(Type == "CE", "CE", "other")) %>% 
-    mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS","NR")) %>% 
-    mutate(groupings = ifelse(factR.event, 
-                              paste(ASNMDtype, Type, sep = "-"), 
-                              "no-NMD")) %>% 
-    mutate(Timepoint = str_replace(Timepoint, "Day", "Day ")) %>% 
-    mutate(Timepoint = factor(Timepoint, 
-                              c("Day 0", "Day 3", "Day 6", 
-                                "Day 12", "Day 24"))) %>% 
-    mutate(groupings = factor(groupings, 
-                              c("no-NMD", "NR-CE","NS-CE",
-                                "NR-other","NS-other")))
-
-
-# Tally up the proportion of CHX-upregulated genes
-dat.tally <- dat %>% 
-    group_by(Timepoint, groupings, dge.CHX.up) %>% 
-    tally() %>% 
-    group_by(Timepoint, groupings) %>% 
-    mutate(frac = n/sum(n))
-
-## Plot fold-enrichment of CHX-upregulated genes
-### calculate fold-enrichment
-dat.foldenr <- dat.tally %>% 
-    group_by(Timepoint) %>% 
-    filter(dge.CHX.up) %>% 
-    mutate(fisher.est = frac/frac[1])
-
-labels <- dat.foldenr %>% 
-    filter(Timepoint == "Day 24") %>% 
-    mutate(fisher.est = ifelse(groupings == "NS-other", fisher.est - 0.2, fisher.est + 0.2))
-
-fig1e <- dat.foldenr %>% 
-    ggplot(aes(x=Timepoint, y = fisher.est, colour = groupings)) +
-    geom_line(aes(group=groupings), size = 1) +
-    geom_point(size = 2.5) +
+## Plot fraction of CHX-regulated AS
+fig1e <- cds.event.time %>% 
+    filter(dge.CHX.up, ds.CHX.sig) %>% 
+    mutate(Timepoint = factor(str_remove(Timepoint, "Day"), 
+                              c("0","3","6","12","24"))) %>% 
+    mutate(Type = factor(Type, (names(fill.colours)))) %>% 
+    ggplot(aes(x=Timepoint, fill = Type)) +
+    geom_bar(position="stack", width = 0.65) +
+    scale_fill_manual(values = fill.colours)+
+    scale_y_continuous(limits = c(-80,1000), expand = c(0,0), breaks = c(200*(0:5))) +
+    scale_x_discrete(expand = c(0,0)) +
     theme_classic() +
-    scale_color_manual(values = line.dot.colours) +
-    scale_y_continuous(limits = c(-0.5,6), expand = c(0,0), breaks = c(0,2,4,6)) +
-    scale_x_discrete(expand = c(0,0,0,.5)) +
-    theme(legend.position = "none",
-          axis.ticks.length.x = unit(.25,"cm"),
+    theme(axis.ticks.length.x = unit(.25,"cm"),
           axis.ticks.length.y = unit(.25,"cm"),
           axis.line = element_blank(),
-          axis.text.x = element_text(vjust = 0)) +
-    annotate("segment", x=0.8, xend=0.8, y = 0, yend = 6, size = 0.75)  +
-    annotate("segment", x=1, xend=5, y = -.5, yend = -.5, size = 0.75)  +
-    labs(x="", y = "Fold enrichment of\nCHX-upregulated genes") +
-    geom_text(data = labels, aes(label = groupings), x=4.8)
+          axis.text.x = element_text(vjust = 0),
+          plot.title = element_text(hjust=0.5)) +
+    labs(x="Day", y = "Number of\nAS-NMD events",fill = "") +
+    ggtitle("CHX-regulated AS and\ngene expression") +
+    annotate("segment", x=0.35, xend=0.35, y = 0, yend = 1000, size = 0.75) +
+    annotate("segment", x=1, xend=5, y = -80, yend = -80, size = 0.75)
 
-
-fig1e
 ```
+
 ### Compile Fig1C-E
 
 
@@ -479,6 +430,65 @@ plot.list <- lapply(names(splitted.df), function(set){
 ```
 
 
+```{r}
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+primary.dat <- read_tsv("../data/tables/ds_primary_CHX_vs_DMSO_bytimepoint.tsv")
+primary.dat <- primary.dat %>% filter(ds.CHX.sig)
+
+# split dataframe by comparison and cell type
+splitted.df <- primary.dat %>% 
+    mutate(Sample = ifelse(Sample =="ESC", "ESC", "Neural cells")) %>% 
+    split(~Sample+Comparison)
+
+# annotate genes by level of responsiveness
+dat <- cds.event.time %>% 
+    filter(ds.CHX.sig|!is.na(ds.CHX.sig)) %>% 
+    arrange(gene_id, desc(ds.CHX.sig), desc(factR.event), desc(ASNMDtype)) %>% 
+    mutate(Timepoint = ifelse(as.character(Timepoint) == "Day0", "Day0", "Neuro")) %>% 
+    distinct(Timepoint, event.id, .keep_all = TRUE) %>% 
+    replace_na(list(ds.CHX.sig=F)) %>% 
+    mutate(groupings = ifelse(!ds.CHX.sig, "Nr", ifelse(dge.CHX.up, "EGr","Er")))
+
+
+overlap <- do.call(bind_cols, lapply(names(splitted.df), function(set){
+    data.frame(col = dat$event.id %in% splitted.df[[set]]$event.id)
+}))
+colnames(overlap) <- names(splitted.df)
+dat <- bind_cols(dat, overlap)
+
+
+# Calculate proportion overlap for each groupings, for each primary groups
+dat.frac <- dat %>% 
+    pivot_longer(contains("vs")) %>% 
+    mutate(primary.timepoint = ifelse(str_detect(name,"ESC"),"Day0","Neuro")) %>% 
+    filter(Timepoint == primary.timepoint, str_detect(name, "N_vs_C")) %>% 
+    group_by(groupings, name,value) %>% 
+    tally() %>% 
+    group_by(groupings, name) %>% 
+    mutate(frac = n/sum(n)) %>% 
+    mutate(groupings = factor(groupings, c("Nr","Er","EGr")))
+
+
+stats <- dat.frac %>% 
+    ungroup() %>% 
+    dplyr::select(groupings, name, value, n) %>% 
+    pivot_wider(names_from = value, values_from = n) %>% 
+    arrange(groupings) %>% 
+    group_by(name) %>%
+    mutate(ctrlTRUE = `TRUE`[1], ctrlFALSE = `FALSE`[1]) %>% 
+    rowwise() %>% 
+    mutate(fisher.p = fisher.test(rbind(c(`TRUE`,`FALSE`), 
+                                        c(`ctrlTRUE`,`ctrlFALSE`)))$p.value) %>% 
+    filter(groupings != "Nr") %>% 
+    ungroup() %>% 
+    mutate(frac = rep(c(50,60),each=2)) %>% 
+    mutate(label = str_glue("P={format(fisher.p, digits=2)}")) %>% 
+    mutate(groupings = "Nr") %>% 
+    mutate(group1 = "Nr", group2 = rep(c("Er", "EGr"), each=2)) %>% 
+    mutate(y = rep(c(55,65), each=2))
+```
+
+
 ### Format fig 1fg
 
 ```{r, fig.width=8,fig.height=3}
@@ -525,10 +535,10 @@ flow2 <- dat.frac %>%
     annotate("text", x=2, y = 1, size = 3, label = "AS-NMD events\nenriched in the\nnucleus") 
 
 fig1g <- flow2 + plot.list[[3]] + plot.list[[4]]
-fig1g
+
 
 fig1fg <- wrap_plots(fig1f,fig1g)+plot_layout(nrow=1)
-fig1fg
+
 ```
 
 
@@ -577,7 +587,6 @@ figs2a <- plot$data %>%
     annotate("segment", x=-60, xend=-60, y = -30, yend = 30, size = 0.75) +
     annotate("segment", x=-50, xend=40, y = -40, yend = -40, size = 0.75) 
 
-figs2a
 ```
 
 ### Panel B
@@ -668,244 +677,12 @@ figs2c <- music %>%
 
 
 
-### Panel D
-
-```{r}
-fill.colours <- c(AA = "#d3cfbc", 
-                  AD= "#c1b9a7",
-                  RI = "#a59b84",
-                  CE = "#6b72a0")
-
-
-# load data
-cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
-
-## Plot fraction of CHX-regulated AS
-figs2d <- cds.event.time %>% 
-    mutate(Timepoint = factor(str_remove(Timepoint, "Day"), 
-                              c("0","3","6","12","24"))) %>% 
-    mutate(Type = factor(Type, (names(fill.colours)))) %>% 
-    filter(ds.CHX.sig) %>% 
-    ggplot(aes(x=Timepoint, fill = Type)) +
-    geom_bar(position="stack", width = 0.65) +
-    scale_fill_manual(values = fill.colours)+
-    scale_y_continuous(limits = c(-80,2000), expand = c(0,0), breaks = c(500*(0:5))) +
-    scale_x_discrete(expand = c(0,0)) +
-    theme_classic() +
-    theme(axis.ticks.length.x = unit(.25,"cm"),
-          axis.ticks.length.y = unit(.25,"cm"),
-          axis.line = element_blank(),
-          axis.text.x = element_text(vjust = 0),
-          plot.title = element_text(hjust=0.5)) +
-    labs(x="Day", y = "Number of\nAS-NMD events",fill = "") +
-    ggtitle("CHX-regulated AS") +
-    annotate("segment", x=0.35, xend=0.35, y = 0, yend = 2000, size = 0.75) +
-    annotate("segment", x=1, xend=5, y = -80, yend = -80, size = 0.75)
-```
-
-
-### Panel E
-
-```{r}
-fill.colours <- c(AA = "#d3cfbc", 
-                  AD= "#c1b9a7",
-                  RI = "#a59b84",
-                  CE = "#6b72a0")
-
-
-# load data
-cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
-
-## Plot fraction of CHX-regulated AS
-figs2e <- cds.event.time %>% 
-    filter(dge.CHX.up, ds.CHX.sig) %>% 
-    mutate(Timepoint = factor(str_remove(Timepoint, "Day"), 
-                              c("0","3","6","12","24"))) %>% 
-    mutate(Type = factor(Type, (names(fill.colours)))) %>% 
-    ggplot(aes(x=Timepoint, fill = Type)) +
-    geom_bar(position="stack", width = 0.65) +
-    scale_fill_manual(values = fill.colours)+
-    scale_y_continuous(limits = c(-80,1000), expand = c(0,0), breaks = c(200*(0:5))) +
-    scale_x_discrete(expand = c(0,0)) +
-    theme_classic() +
-    theme(axis.ticks.length.x = unit(.25,"cm"),
-          axis.ticks.length.y = unit(.25,"cm"),
-          axis.line = element_blank(),
-          axis.text.x = element_text(vjust = 0),
-          plot.title = element_text(hjust=0.5)) +
-    labs(x="Day", y = "Number of\nAS-NMD events",fill = "") +
-    ggtitle("CHX-regulated AS and\ngene expression") +
-    annotate("segment", x=0.35, xend=0.35, y = 0, yend = 1000, size = 0.75) +
-    annotate("segment", x=1, xend=5, y = -80, yend = -80, size = 0.75)
-
-```
-
-
-
-
-### Conservation scores on groupings above
-
-```{r, fig.width=8,fig.height=3}
-
-
-fill.colours <- c(Nr = "#d8d8d6", 
-                      Er= "#9191bc",
-                      EGr = "#676aa0")
-border.colours <- c(Nr = "#bdbdbd", 
-                      Er= "#7d7897",
-                      EGr = "#655185")
-
-
-
-# load data
-cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
-primary.dat <- read_tsv("../data/tables/ds_primary_CHX_vs_DMSO_bytimepoint.tsv")
-primary.dat <- primary.dat %>% filter(ds.CHX.sig)
-events <- read_tsv("../data/metadata/events_ASNMD_metadata.tsv.gz")
-events <- events %>% 
-    mutate(event.id = paste0(coord, strand, gene_id))
-
-# split dataframe by comparison and cell type
-splitted.df <- primary.dat %>% 
-    mutate(Sample = ifelse(Sample =="ESC", "ESC", "Neural cells")) %>% 
-    split(~Sample+Comparison)
-
-# annotate genes by level of responsiveness
-dat <- cds.event.time %>% 
-    filter(ds.CHX.sig|!is.na(ds.CHX.sig)) %>% 
-    arrange(gene_id, desc(ds.CHX.sig), desc(factR.event), desc(ASNMDtype)) %>% 
-    mutate(Timepoint = ifelse(as.character(Timepoint) == "Day0", "Day0", "Neuro")) %>% 
-    distinct(Timepoint, event.id, .keep_all = TRUE) %>% 
-    replace_na(list(ds.CHX.sig=F)) %>% 
-    mutate(groupings = ifelse(!ds.CHX.sig, "Nr", ifelse(dge.CHX.up, "EGr","Er"))) %>% 
-    mutate(groupings = factor(groupings, c("Nr","Er","EGr")))
-
-
-overlap <- do.call(bind_cols, lapply(names(splitted.df), function(set){
-    data.frame(col = dat$event.id %in% splitted.df[[set]]$event.id)
-}))
-colnames(overlap) <- names(splitted.df)
-dat <- bind_cols(dat, overlap)
-
-
-
-# Pivot data and filter datapoints of similar dev timepoints
-dat <- dat %>% 
-    pivot_longer(contains("vs")) %>% 
-    mutate(primary.timepoint = ifelse(str_detect(name,"ESC"),"Day0","Neuro")) %>% 
-    filter(Timepoint == primary.timepoint) 
-
-# Add Conservation score data
-dat.cons <- dat %>% 
-    left_join(events) %>% 
-    filter(value)
-
-## Plot distribution of PhastCons score for each overlap
-
-### Get statistics
-stats <- compare_means(PhastCons.score~groupings, data = dat.cons, group.by = "name", ref.group = "Nr") %>% 
-    mutate(label = as.character(str_glue("P={format(p, digits=2)}"))) %>% 
-    mutate(`.y.` = rep(c(1.1,1.2), 4)) %>% 
-    mutate(groupings = "Nr")
-
-
-groups <- unique(dat.cons$name)
-
-
-plot.list <- lapply(unique(dat.cons$name), function(d){
-    dat.cons %>% 
-        filter(name == d) %>% 
-        ggplot(aes(x=groupings, y = PhastCons.score, fill = groupings,
-                   colour = groupings)) +
-        stat_boxplot(geom= "errorbar", width = 0.1,position = position_dodge(0.75)) +
-        geom_boxplot(outlier.alpha = 0, outlier.shape = NA, coef=0) +
-        scale_fill_manual(values = fill.colours) +
-        scale_colour_manual(values = border.colours) +
-        scale_y_continuous(limits = c(0,1.2), 
-                           breaks = (0:5)/5) +
-        theme_classic() +
-        theme(legend.position = "none",
-          axis.ticks.x = element_blank(),
-          axis.ticks.length.y = unit(.25,"cm"),
-          axis.line = element_blank(),
-          axis.text.x = element_text(hjust=1, angle = 45, colour = border.colours),
-          plot.title = element_text(hjust=0.5)) +
-        labs(x="", y = "PhastCons score")+
-        scale_x_discrete(labels = c("Non-responsive", "Event-level\nresponse",
-                                    "Event- and\ngene-level\nresponse")) +
-        ggtitle(ifelse(str_detect(d,"ESC"), "ESC,\nnWilcoxon rank sum test:",
-                       "Neural cells,\nnWilcoxon rank sum test:")) +
-        stat_pvalue_manual(data = stats[stats$name==d,], y.position = ".y.",
-                           linetype = "dotted") +
-        annotate("segment", x=0, xend=0, y = 0, yend = 1, size = 0.75) 
-})
-
-
-
-```
-
-```{r}
-flow1 <- dat.cons %>% 
-    ggplot(aes(x=groupings, y = frac, colour=groupings, fill = groupings)) + 
-    theme_void() + 
-    scale_color_manual(values = border.colours) +
-        scale_fill_manual(values = fill.colours) +
-        scale_y_continuous(limits = c(-5,70), breaks = c(10*(0:6))) +
-        scale_x_discrete(labels = c("Non-\nresponsive", "Event-level\nresponse",
-                                    "Event- and\ngene-level\nresponse")) +
-    annotate("text", x=2, y = 65, size = 3, label = "ESCs and \nprimary cortical\nNPCs and neurons") +
-     annotate("segment", x = 2, xend = 2, y = 52, yend = 46,
-           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
-    annotate("text", x=2, y = 40, size = 3, label = "+/- CHX") +
-     annotate("segment", x = 2, xend = 2, y = 33, yend = 27,
-           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
-    annotate("text", x=2, y = 20, size = 3, label = "RNA-seq") +
-     annotate("segment", x = 2, xend = 2, y = 17, yend = 11,
-           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
-    annotate("text", x=2, y = 2, size = 3, label = "CHX-regulated\nAS-NMD events") 
-
-figs2f <- flow1 + plot.list[[1]] + plot.list[[2]]
-figs2f
-
-
-flow2 <- dat.cons %>% 
-    ggplot(aes(x=groupings, y = frac, colour=groupings, fill = groupings)) + 
-    theme_void() + 
-     scale_color_manual(values = border.colours) +
-        scale_fill_manual(values = fill.colours) +
-        scale_y_continuous(limits = c(-5,70), breaks = c(10*(0:6))) +
-        scale_x_discrete(labels = c("Non-\nresponsive", "Event-level\nresponse",
-                                    "Event- and\ngene-level\nresponse")) +
-    annotate("text", x=2, y = 65, size = 3, label = "ESCs and \nprimary cortical\nNPCs and neurons") +
-     annotate("segment", x = 2, xend = 2, y = 55, yend = 49,
-           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
-    annotate("text", x=2, y = 40, size = 3, label = "Prepare nuclear\nandcytoplasmic\nfractions") +
-     annotate("segment", x = 2, xend = 2, y = 30, yend = 24,
-           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
-    annotate("text", x=2, y = 20, size = 3, label = "RNA-seq") +
-     annotate("segment", x = 2, xend = 2, y = 17, yend = 11,
-           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
-    annotate("text", x=2, y = 1, size = 3, label = "AS-NMD events\nenriched in the\nnucleus") 
-
-figs2g <- flow2 + plot.list[[3]] + plot.list[[4]]
-figs2g
-
-figs2fg <- wrap_plots(figs2f,figs2g)+plot_layout(nrow=1)
-figs2fg
-```
-
-
-
 ### Compile FigS2
 
 ```{r, fig.width=8, fig.height=10}
-plot1 <- figs2a+figs2c + plot_layout(widths = c(2,1))
-plot2 <- figs2d/figs2e
-plot2 <- wrap_plots(figs2b, plot2) + plot_layout(ncol=2,widths = c(2,1))
-
-figs2 <- plot1/plot2/figs2fg + 
+figs2 <- wrap_plots(figs2a,figs2b, figs2c)+ 
     plot_layout(heights = c(.85,1.2,.5)) + 
-    plot_annotation(tag_levels = list(c("A","C","B","D","E","F","","","G","",""))) &
+    plot_annotation(tag_levels = list(c("A","B","C"))) &
     theme(plot.tag = element_text(size = 20, face="bold"))
 
 ggsave(plot = figs2, filename = "../data/figures/FigS2.pdf", device = "pdf", 
@@ -1134,7 +911,7 @@ fig2c <- dp_gp_ranked %>%
     annotate("segment", x=.08, xend=.08, y = 0, yend = 20, size = 0.75)  +
     annotate("segment", x=1, xend=28, y = -1, yend = -1, size = 0.75)   +
     ggtitle("All genes")
-fig2c
+
 
 
 
@@ -1187,8 +964,7 @@ as.gex.corr <- read_tsv("../data/tables/exons_gex_correlation.tsv.gz")
 
 dat <- cds.event.time %>% 
     arrange(gene_id, desc(ds.CHX.sig), desc(factR.event), desc(ASNMDtype)) %>% 
-    distinct(Timepoint,gene_id, .keep_all = TRUE) %>% 
-    filter(ds.CHX.sig|!is.na(ds.CHX.sig), dge.CHX.up, psi.gex.sig) %>% 
+    filter(ds.CHX.sig|!is.na(ds.CHX.sig), psi.gex.sig) %>% 
     replace_na(list(ds.CHX.sig = FALSE)) %>% 
     mutate(Type = ifelse(Type == "CE", "CE", "Other")) %>% 
     mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS","NR")) %>% 
@@ -1203,6 +979,7 @@ dat <- cds.event.time %>%
     group_by(group) %>% 
     mutate(frac = 100*n/sum(n)) %>% 
     mutate(rank_by_KeT = factor(rank_by_KeT, 1:28)) 
+
 
 names <- c("Non-responsive\nAS-NMD events,\nFisher's exact test:",
            "CHX-responsive\nnon-CE events,\nFisher's exact test:",
@@ -1229,6 +1006,8 @@ bg.stats <- dp_gp_genes %>%
 
 dat.stats.fisher <- dat.stats %>% 
     left_join(bg.stats, by = c("group2"="cluster")) %>% 
+    group_by(group2) %>% 
+    mutate(bg=n[3],bgrest=rest[3]) %>% 
     rowwise() %>% 
     mutate(fisher.p = fisher.test(rbind(c(n,rest), 
                                         c(bg,bgrest)),
@@ -1268,7 +1047,7 @@ plot.list <- lapply(names(names), function(grp){
 })
 
 fig2dg <- do.call(wrap_plots, plot.list) + plot_layout(nrow=1)
-fig2dg
+
 
 ```
 
@@ -1306,9 +1085,7 @@ dat.kendall <- dat %>%
     filter(!is.na(psi.KeT)) %>% 
     mutate(gene.cor.bin = 0.5+as.numeric(cut(psi.KeT, breaks = seq(-1,1,0.1)))) %>% 
     mutate(gene.cor.bin = factor(gene.cor.bin, sort(unique(gene.cor.bin))))
-    # group_by(gene.cor.bin, groupings) %>% tally() %>% 
-    # group_by(groupings) %>% 
-    # mutate(n = n/sum(n)) 
+
 
 stats <- dat.kendall %>% 
     group_by(groupings) %>% 
@@ -1384,8 +1161,6 @@ dat.grouped <- dat %>%
     left_join(gex.corr.kendall) %>%
     filter(ifelse(groupings!="Not-responsive", 
                   psi.gex.sig, T)) %>%
-    # filter(!is.na(psi.KeT)) %>% 
-    # filter(psi.KeP < KePco) %>% 
     mutate(dir = ifelse(psi.KeT > 0, "Up", "Down")) %>% 
     mutate(dir = factor(dir, c("Up", "Down"))) %>% 
     filter(groupings != "Others") %>% 
@@ -1449,7 +1224,295 @@ ggsave(plot = fig2, filename = "../data/figures/Fig2.pdf", device = "pdf",
        units = "mm", width = 200, height = 200, dpi = 30, scale = 1.8)
 ```
 
+## Fig 3
+
+### Panel B
+
+```{r, fig.width=8, fig.height=8}
+# set colours
+
+fill.colours <- c(`Not-responsive` = "#d8d8d6", 
+                      Responsive= "#9191bc",
+                      `Resp+devreg` = "#676aa0")
+border.colours <- c(`Not-responsive` = "#bdbdbd", 
+                      Responsive= "#7d7897",
+                      `Resp+devreg` = "#655185")
+
+
+
+# load data
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+event.meta <- read_tsv("../data/metadata/events_ASNMD_metadata.tsv.gz") %>% 
+    mutate(event.id = paste0(coord,strand,gene_id))
+ds.chx <- read_tsv("../data/tables/ds_iNs_CHX_vs_DMSO_bytimepoint.tsv") %>% 
+    dplyr::select(event.id, gene_name, Coord, Strand) %>% 
+    distinct()
+psi.gex.corr <- read_tsv("../data/tables/exons_gex_correlation.tsv.gz")
+
+event.kendall <- read_tsv("../data/tables/exons_kendall.tsv.gz")
+gene.kendall <- read_tsv("../data/tables/gex_kendall.tsv.gz")
+linares <- read_tsv("../data/tables/linares_siP_vs_SiC_sig.tsv.gz")
+event.ptb.corr <- read_tsv("../data/tables/event_PTBP_corr.tsv.gz")
+
+
+dat <- cds.event.time %>% 
+    filter(factR.event) %>% 
+    mutate(groupings = ifelse(ds.CHX.sig & dge.CHX.up, 
+                              "Responsive", "Not-responsive")) %>% 
+    arrange(gene_id, event.id, desc(groupings)) %>% 
+    distinct(gene_id, event.id, .keep_all = T) 
+dat <- dat %>%
+     filter(groupings=="Responsive" & dge.CHX.up & psi.gex.sig) %>% 
+    mutate(groupings = "Resp+devreg") %>%
+    bind_rows(dat) 
+
+
+dat.ptb <- dat %>% 
+    left_join(psi.gex.corr) %>% 
+    left_join(event.kendall) %>% 
+    left_join(gene.kendall) %>% 
+    arrange(desc(psi.gex.PeT)) %>% 
+    left_join(linares %>% dplyr::select(event.id = id, DeltaPsi)) %>% 
+    left_join(event.ptb.corr)
+
+
+dat.ptb <- dat.ptb %>% 
+    mutate(PTB_cons = ifelse(psi.ptb.PeR*DeltaPsi > 0, FALSE, TRUE)) %>% 
+    mutate(PTB_cons = ifelse( psi.ptb.PeP < KePco & abs(psi.ptb.PeR) > KeTco, PTB_cons, NA ) )  %>%
+    replace_na(list(PTB_cons=FALSE))
+
+
+
+# Calculate proportion overlap for each groupings, for each primary groups
+dat.frac <- dat.ptb %>% 
+    group_by(groupings, PTB_cons) %>% 
+    tally() %>% 
+    group_by(groupings) %>% 
+    mutate(frac = n/sum(n)) %>% 
+    mutate(groupings = factor(groupings, 
+                              c("Not-responsive","Responsive", "Resp+devreg")))
+
+## Plot proportion of overlap for each primary groupings
+stats <- dat.frac %>% 
+    ungroup() %>% 
+    dplyr::select(groupings, PTB_cons, n) %>% 
+    pivot_wider(names_from = PTB_cons, values_from = n) %>% 
+    arrange(groupings) %>% 
+    mutate(ctrlTRUE = `TRUE`[1], ctrlFALSE = `FALSE`[1]) 
+stats <- bind_rows(stats,stats[3,])
+stats[4,]$ctrlTRUE <- 41
+stats[4,]$ctrlFALSE <- 1391
+stats <- stats %>% 
+    rowwise() %>% 
+    mutate(fisher.p = fisher.test(rbind(c(`TRUE`,`FALSE`), 
+                                        c(`ctrlTRUE`,`ctrlFALSE`)))$p.value) %>% 
+    filter(groupings != "Not-responsive") %>% 
+    ungroup() %>% 
+    mutate(frac = rep(c(50,60,70))) %>% 
+    mutate(label = str_glue("P={format(fisher.p, digits=2)}")) %>% 
+    mutate(groupings = c(rep("Not-responsive",2),"Responsive")) %>% 
+    mutate(group1 = groupings, group2 = rep(c("Responsive", "Resp+devreg","Resp+devreg"), each=1)) %>% 
+    mutate(y = rep(c(8,13, 11), each=1))
+    
+
+fig3b <- dat.frac %>% 
+    mutate(frac = frac*100) %>% 
+    filter(PTB_cons) %>% 
+    ggplot(aes(x=groupings, y = frac, colour=groupings, fill = groupings)) +
+    geom_bar(stat="identity") +
+    theme_classic() +
+    scale_color_manual(values = border.colours) +
+    scale_fill_manual(values = fill.colours) +
+    scale_y_continuous(limits = c(0,13), breaks = c(5*(0:3))) +
+    scale_x_discrete(labels = c("Non-resp.", "CHX-resp.",
+                                "Neurodev.\nCHX-resp.")) +
+    theme(legend.position = "none",
+      axis.ticks.x = element_blank(),
+      axis.ticks.length.y = unit(.25,"cm"),
+      axis.line = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1.2, colour = border.colours),
+      plot.title = element_text(hjust=0.5, vjust=-1)) +
+    annotate("segment", x=0.35, xend=0.35, y = 0, yend = 12, size = 0.75) +
+    labs(x="", y = "% PTBP1-controlled events") +
+    ggtitle("Fisher's exact test:") +
+    stat_pvalue_manual(stats, label = "label", 
+                       y.position = "y",
+                   tip.length = 0.05,
+                   label.size = 4,
+                   linetype = "dotted") 
+
+ggsave(plot = fig3b, filename = "../data/figures/Fig3B.pdf", device = "pdf", 
+       units = "mm", width = 40, height = 50, dpi = 20, scale = 2)
+
+```
+
 ## Fig S4
+
+
+```{r, fig.width=8,fig.height=3}
+
+
+fill.colours <- c(Nr = "#d8d8d6", 
+                      Er= "#9191bc",
+                      EGr = "#676aa0")
+border.colours <- c(Nr = "#bdbdbd", 
+                      Er= "#7d7897",
+                      EGr = "#655185")
+
+
+
+# load data
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+primary.dat <- read_tsv("../data/tables/ds_primary_CHX_vs_DMSO_bytimepoint.tsv")
+primary.dat <- primary.dat %>% filter(ds.CHX.sig)
+events <- read_tsv("../data/metadata/events_ASNMD_metadata.tsv.gz")
+events <- events %>% 
+    mutate(event.id = paste0(coord, strand, gene_id))
+
+# split dataframe by comparison and cell type
+splitted.df <- primary.dat %>% 
+    mutate(Sample = ifelse(Sample =="ESC", "ESC", "Neural cells")) %>% 
+    split(~Sample+Comparison)
+
+# annotate genes by level of responsiveness
+dat <- cds.event.time %>% 
+    filter(ds.CHX.sig|!is.na(ds.CHX.sig)) %>% 
+    arrange(gene_id, desc(ds.CHX.sig), desc(factR.event), desc(ASNMDtype)) %>% 
+    mutate(Timepoint = ifelse(as.character(Timepoint) == "Day0", "Day0", "Neuro")) %>% 
+    distinct(Timepoint, event.id, .keep_all = TRUE) %>% 
+    replace_na(list(ds.CHX.sig=F)) %>% 
+    mutate(groupings = ifelse(!ds.CHX.sig, "Nr", ifelse(dge.CHX.up, "EGr","Er"))) %>% 
+    mutate(groupings = factor(groupings, c("Nr","Er","EGr")))
+
+
+overlap <- do.call(bind_cols, lapply(names(splitted.df), function(set){
+    data.frame(col = dat$event.id %in% splitted.df[[set]]$event.id)
+}))
+colnames(overlap) <- names(splitted.df)
+dat <- bind_cols(dat, overlap)
+
+
+
+# Pivot data and filter datapoints of similar dev timepoints
+dat <- dat %>% 
+    pivot_longer(contains("vs")) %>% 
+    mutate(primary.timepoint = ifelse(str_detect(name,"ESC"),"Day0","Neuro")) %>% 
+    filter(Timepoint == primary.timepoint) 
+
+# Add Conservation score data
+dat.cons <- dat %>% 
+    left_join(events) %>% 
+    filter(value)
+
+## Plot distribution of PhastCons score for each overlap
+
+### Get statistics
+stats <- compare_means(PhastCons.score~groupings, data = dat.cons, group.by = "name", ref.group = "Nr") %>% 
+    mutate(label = as.character(str_glue("P={format(p, digits=2)}"))) %>% 
+    mutate(`.y.` = rep(c(1.1,1.2), 4)) %>% 
+    mutate(groupings = "Nr")
+
+
+groups <- unique(dat.cons$name)
+
+
+plot.list <- lapply(unique(dat.cons$name), function(d){
+    dat.cons %>% 
+        filter(name == d) %>% 
+        ggplot(aes(x=groupings, y = PhastCons.score, fill = groupings,
+                   colour = groupings)) +
+        stat_boxplot(geom= "errorbar", width = 0.1,position = position_dodge(0.75)) +
+        geom_boxplot(outlier.alpha = 0, outlier.shape = NA, coef=0) +
+        scale_fill_manual(values = fill.colours) +
+        scale_colour_manual(values = border.colours) +
+        scale_y_continuous(limits = c(0,1.2), 
+                           breaks = (0:5)/5) +
+        theme_classic() +
+        theme(legend.position = "none",
+          axis.ticks.x = element_blank(),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          axis.text.x = element_text(hjust=1, angle = 45, colour = border.colours),
+          plot.title = element_text(hjust=0.5)) +
+        labs(x="", y = "PhastCons score")+
+        scale_x_discrete(labels = c("Non-responsive", "Event-level\nresponse",
+                                    "Event- and\ngene-level\nresponse")) +
+        ggtitle(ifelse(str_detect(d,"ESC"), "ESC,\nnWilcoxon rank sum test:",
+                       "Neural cells,\nnWilcoxon rank sum test:")) +
+        stat_pvalue_manual(data = stats[stats$name==d,], y.position = ".y.",
+                           linetype = "dotted") +
+        annotate("segment", x=0, xend=0, y = 0, yend = 1, size = 0.75) 
+})
+
+
+
+```
+
+```{r}
+flow1 <- dat.cons %>% 
+    ggplot(aes(x=groupings, y = frac, colour=groupings, fill = groupings)) + 
+    theme_void() + 
+    scale_color_manual(values = border.colours) +
+        scale_fill_manual(values = fill.colours) +
+        scale_y_continuous(limits = c(-5,70), breaks = c(10*(0:6))) +
+        scale_x_discrete(labels = c("Non-\nresponsive", "Event-level\nresponse",
+                                    "Event- and\ngene-level\nresponse")) +
+    annotate("text", x=2, y = 65, size = 3, label = "ESCs and \nprimary cortical\nNPCs and neurons") +
+     annotate("segment", x = 2, xend = 2, y = 52, yend = 46,
+           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
+    annotate("text", x=2, y = 40, size = 3, label = "+/- CHX") +
+     annotate("segment", x = 2, xend = 2, y = 33, yend = 27,
+           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
+    annotate("text", x=2, y = 20, size = 3, label = "RNA-seq") +
+     annotate("segment", x = 2, xend = 2, y = 17, yend = 11,
+           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
+    annotate("text", x=2, y = 2, size = 3, label = "CHX-regulated\nAS-NMD events") 
+
+figs4d <- flow1 + plot.list[[1]] + plot.list[[2]]
+figs4d
+
+
+flow2 <- dat.cons %>% 
+    ggplot(aes(x=groupings, y = frac, colour=groupings, fill = groupings)) + 
+    theme_void() + 
+     scale_color_manual(values = border.colours) +
+        scale_fill_manual(values = fill.colours) +
+        scale_y_continuous(limits = c(-5,70), breaks = c(10*(0:6))) +
+        scale_x_discrete(labels = c("Non-\nresponsive", "Event-level\nresponse",
+                                    "Event- and\ngene-level\nresponse")) +
+    annotate("text", x=2, y = 65, size = 3, label = "ESCs and \nprimary cortical\nNPCs and neurons") +
+     annotate("segment", x = 2, xend = 2, y = 55, yend = 49,
+           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
+    annotate("text", x=2, y = 40, size = 3, label = "Prepare nuclear\nandcytoplasmic\nfractions") +
+     annotate("segment", x = 2, xend = 2, y = 30, yend = 24,
+           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
+    annotate("text", x=2, y = 20, size = 3, label = "RNA-seq") +
+     annotate("segment", x = 2, xend = 2, y = 17, yend = 11,
+           colour = "#9d9d9c", size = 1.5, arrow = arrow(length = unit(4,"mm"))) +
+    annotate("text", x=2, y = 1, size = 3, label = "AS-NMD events\nenriched in the\nnucleus") 
+
+figs4e <- flow2 + plot.list[[3]] + plot.list[[4]]
+
+
+figs4de <- wrap_plots(figs4d,figs4e)+plot_layout(nrow=1)
+
+
+ggsave(plot = figs4de, filename = "../data/figures/Fig4DE.pdf", device = "pdf", 
+       units = "mm", width = 40, height = 50, dpi = 20, scale = 2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+## Fig S5
 
 ```{r}
 # load dp_gp_data
@@ -1466,7 +1529,7 @@ dat <- dp_gp_genes %>%
     pivot_longer(cols = c("0","1","2","3","4")) %>% 
     mutate(rank_by_KeT = paste0("Rank ", rank_by_KeT)) 
 
-figs4 <- do.call(wrap_plots,lapply(paste0("Rank ", 1:28) , function(r){
+figs5 <- do.call(wrap_plots,lapply(paste0("Rank ", 1:28) , function(r){
     r.dat <- dat %>%
         filter(rank_by_KeT==r) 
     r.mean <- r.dat %>% 
@@ -1490,7 +1553,8 @@ ggsave(plot = figs4, filename = "../data/figures/FigS4.pdf", device = "pdf",
 ```
 
 
-## Fig S5
+
+## Fig S6
 
 ### Panel A
 
@@ -1535,10 +1599,9 @@ names(names) <- c("Not-responsive","Others","NR-CE","NS-CE")
 breaks = seq(-1,1,0.1)
 
 
-figs5a <- do.call(wrap_plots,lapply(names(names), function(grp){
+figs6a <- do.call(wrap_plots,lapply(names(names), function(grp){
     dat.kendall %>%
         filter(groupings == grp) %>% 
-        # mutate(n = n*100) %>%
         ggplot(aes(x=gex.KeT)) +
         geom_histogram(aes(y=..density..*10), width =1, breaks = breaks, fill = "#a4a4a4") +
         theme_classic() +
@@ -1606,7 +1669,7 @@ stats <- dat.grouped %>%
     group_by(gex.Kend.dir) %>% 
     mutate(bg = n[3], bgrest = rest[3]) %>% 
     rowwise() %>% 
-    mutate(fisher.p = fisher.test(rbind(c(n,rest), c(bg, bgrest)), alternative="greater")$p.value) %>% 
+    mutate(fisher.p = fisher.test(rbind(c(n,rest), c(bg, bgrest)), alternative = "greater")$p.value) %>% 
     ungroup() %>% 
     filter(gex.Kend.dir != "Not-regulated") %>% 
     mutate(label = ifelse(groupings == "Not-responsive", "",
@@ -1619,7 +1682,7 @@ names <- c("Downregulated in neurodevelopment\n(𝛕<-0.75,P<0.05)",
 names(names) <- c("Down", "Up")
 
 
-figs5bc <- do.call(wrap_plots, lapply(names(names), function(dir){
+figs6bc <- do.call(wrap_plots, lapply(names(names), function(dir){
     dat.grouped  %>% 
         filter(gex.Kend.dir == dir) %>% 
         ggplot(aes(x=groupings,y=frac)) +
@@ -1645,9 +1708,6 @@ figs5bc <- do.call(wrap_plots, lapply(names(names), function(dir){
 
 
 
-    
-
-
 ```
 
 
@@ -1664,6 +1724,7 @@ ase.cons <- ase %>%
 
 dat <- cds.event.time %>% 
     filter(factR.event) %>% 
+    filter(Type=="CE") %>% 
     mutate(groupings = ifelse(ds.CHX.sig & dge.CHX.up, 
                               "Responsive", "Not-responsive")) %>% 
     arrange(gene_id, event.id, desc(groupings)) %>% 
@@ -1699,7 +1760,7 @@ stats <- compare_means(data = dat.ase, formula = PhastCons.score ~ groupings,
 
 
 
-figs5de <- do.call(wrap_plots, lapply(names(names), function(d){
+figs6de <- do.call(wrap_plots, lapply(names(names), function(d){
     dat.ase%>% 
         filter(gex.Kend.dir == d) %>% 
         ggplot(aes(x=groupings, y = PhastCons.score)) +
@@ -1715,7 +1776,7 @@ figs5de <- do.call(wrap_plots, lapply(names(names), function(d){
           axis.text.x = element_text(hjust=1, angle = 45),
           plot.title = element_text(hjust=0.5)) +
         labs(x="", y = "PhastCons score")+
-        scale_x_discrete(labels = c("Non-reg", "Non-CE",
+        scale_x_discrete(labels = c("Non-reg", 
                                     "NR-CE", "NS-CE")) +
         annotate("segment", xend = 0.25,x=0.25, y=0,yend = 1) +
         ggtitle(names[d]) +
@@ -1734,51 +1795,17 @@ figs5de <- do.call(wrap_plots, lapply(names(names), function(d){
 ```
 
 
-### Panel D
-
-```{r}
-genes.meta <- read_tsv("../data/metadata/genes_metadata.tsv.gz")
-dds <- readRDS("../data/rds/DDS_all_samples.rds")
-vsd <- vst(dds, blind=FALSE)
-meta <- colData(dds)[dds$condition=="DMSO",]
-
-selected.genes <- c("Ripk1", "Iqgap1", "Ptbp1", "Fmnl3", 
-                    "Ptbp2", "Dlg4","Gabbr1","Stx1b", "Vamp2")
-selected.genes.meta <- genes.meta[genes.meta$gene_name %in% selected.genes,]
-selected.genes.meta <- as.data.frame(selected.genes.meta)
-rownames(selected.genes.meta) <- selected.genes.meta$gene_name
-selected.genes.meta <- selected.genes.meta[selected.genes,]
-
-dat <- assay(vsd[selected.genes.meta$gene_id,meta$sample])
-rownames(dat) <- selected.genes
-colnames(dat) <- meta$batch
-
-dat <- t(scale(t(dat)))
-
-
-figs5f <- Heatmap(dat, name = " ", cluster_rows = F, cluster_columns = F, 
-        col = colorRampPalette(rev(brewer.pal(n = 9, name = "RdYlBu")))(400),
-        column_split = factor(rep(unique(dds$day), each=2),
-                              unique(dds$day)),
-        column_names_rot = 0)
-figs5f <- grid.grabExpr(draw(figs5f, padding = unit(c(20,10,20,10), "mm")))
-
-
-
-```
-
-
 ### Compile
 
 ```{r}
-line2 <- (figs5bc/figs5de) | figs5f 
-figs5 <- figs5a/line2+ 
+line2 <- (figs6bc/figs6de)
+figs5 <- figs6a/line2 + 
     plot_layout(heights = c(1,3)) +
-    plot_annotation(tag_levels = list(c("A","","","","B","C","D","E","F"))) &
+    plot_annotation(tag_levels = list(c("A","","","","B","C","D","E"))) &
     theme(plot.tag = element_text(size = 20, face="bold"))
 
 
-ggsave(plot = figs5, filename = "../data/figures/FigS5.pdf", device = "pdf", 
+ggsave(plot = figs6, filename = "../data/figures/FigS6.pdf", device = "pdf", 
        units = "mm", width = 200, height = 200, dpi = 30, scale = 1.8)
 ```
 
@@ -1800,8 +1827,8 @@ border.colours <- c(`Non-reg` = "#b5b5b5", `NR-CE` = "#D65C74",
 
 
 # load data
-hipp.ase.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_ase2.tsv.gz")
-gex.kendall <- read_tsv("../data/tables/gex_hippocampus_kendall4.tsv.gz")
+hipp.ase.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_ase.tsv.gz")
+gex.kendall <- read_tsv("../data/tables/gex_hippocampus_kendall.tsv.gz")
 hipp.tx.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_tx.tsv.gz")
 cds <- hipp.tx.meta %>% filter(cds=="yes") %>% 
     pull(gene_id) %>% 
@@ -1815,7 +1842,7 @@ dat <- hipp.ase.meta %>%
 dat <- dat %>% 
     filter(!factR.event) %>%
     distinct(gene_id, .keep_all = T) %>% 
-    bind_rows(dat %>% filter(factR.event & gene.cor.estimate>0 & gene.cor.pval<0.05)) %>% 
+    bind_rows(dat %>% filter(factR.event & gene.cor.estimate>0.2 & gene.cor.pval<0.05)) %>% 
     mutate(groupings = "Non-NMD") %>% 
     mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS", "NR")) %>% 
     mutate(AStype = ifelse(AStype == "CE", "CE", "Others")) %>% 
@@ -1840,7 +1867,7 @@ stats <- dat.frac %>%
     group_by(dir) %>% 
     mutate(bg = n[3], bgrest = rest[3]) %>% 
     rowwise() %>% 
-    mutate(fisher.p = fisher.test(rbind(c(n,rest), c(bg, bgrest)))$p.value) %>% 
+    mutate(fisher.p = fisher.test(rbind(c(n,rest), c(bg, bgrest)))$p.value, alternative="greater") %>% 
     ungroup() %>% 
     filter(dir != "Not-regulated") %>% 
     filter(groupings %in% c("Non-NMD", "NS-CE")) %>% 
@@ -1886,24 +1913,9 @@ fig6ab <- do.call(wrap_plots,lapply(names(names), function(x){
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ```
+
+
 ```{r}
 fill.colours <- c(`Non-NMD` = "#d8d8d6", `NR-CE` = "#FC7E87",
                   `NS-CE` = "#4EA4E5", `NR-other`= "#E0BDD1", 
@@ -1916,8 +1928,8 @@ border.colours <- c(`Non-NMD` = "#b5b5b5", `NR-CE` = "#D65C74",
 
 
 # load data
-hipp.ase.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_ase2.tsv.gz")
-gex.kendall <- read_tsv("../data/tables/gex_hippocampus_kendall4.tsv.gz")
+hipp.ase.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_ase.tsv.gz")
+gex.kendall <- read_tsv("../data/tables/gex_hippocampus_kendall.tsv.gz")
 hipp.tx.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_tx.tsv.gz")
 cds <- hipp.tx.meta %>% filter(cds=="yes") %>% 
     pull(gene_id) %>% 
@@ -1928,21 +1940,24 @@ dat <- hipp.ase.meta %>%
     left_join(gex.kendall) %>% 
     mutate(factR.event = ifelse(!is.na(ASNMDtype), T, F)) 
 
-dat <- dat %>% 
-    distinct(gene_id, .keep_all = T) %>% 
-    bind_rows(dat %>% filter(factR.event,  gex.KeP < 0.05, abs(gex.KeT) > 0.75 & gene.cor.estimate>0 & gene.cor.pval<0.05, T)) %>% 
+dat <- dat %>%
+    filter(!factR.event) %>% 
+    distinct(gene_id, .keep_all = T) %>%
+    bind_rows(dat %>% filter(factR.event,  gex.KeP < 0.05, abs(gex.KeT) > 0.75 & gene.cor.estimate>0.2 & gene.cor.pval<0.05, T)) %>%
     # filter(ifelse(factR.event, gene.cor.estimate>0 & gene.cor.pval<0.05, T)) %>%
-    mutate(groupings = "Non-NMD") %>% 
-    mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS", "NR")) %>% 
-    mutate(AStype = ifelse(AStype == "CE", "CE", "Others")) %>% 
-    mutate(groupings = ifelse(factR.event & AStype == "Others", "Others", groupings)) %>% 
-    mutate(groupings = ifelse(factR.event & AStype == "CE", paste0(ASNMDtype, "-CE"), groupings)) %>% 
+    mutate(groupings = "Non-NMD") %>%
+    mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS", "NR")) %>%
+    mutate(AStype = ifelse(AStype == "CE", "CE", "Others")) %>%
+    mutate(groupings = ifelse(factR.event & AStype == "Others", "Others", groupings)) %>%
+    mutate(groupings = ifelse(factR.event & AStype == "CE", paste0(ASNMDtype, "-CE"), groupings)) %>%
     filter(!is.na(gex.KeT)) %>%
-    mutate(dir = "Not-regulated") %>% 
-    mutate(dir = ifelse(gex.KeP < 0.05 & gex.KeT > 0, "Up", dir)) %>% 
+    mutate(dir = "Not-regulated") %>%
+    mutate(dir = ifelse(gex.KeP < 0.05 & gex.KeT > 0, "Up", dir)) %>%
     mutate(dir = ifelse(gex.KeP < 0.05 & gex.KeT < 0, "Down", dir))  %>%
-    mutate(groupings = factor(groupings, c("Non-NMD", "Others", "NR-CE", "NS-CE"))) %>% 
+    mutate(groupings = factor(groupings, c("Non-NMD", "Others", "NR-CE", "NS-CE"))) %>%
     filter(groupings %in% c("NS-CE", "Non-NMD"), dir != "Not-regulated")
+
+
 
 
 stats <- compare_means(data = dat, formula = PhastCons.score ~ groupings,
@@ -1997,6 +2012,124 @@ ggsave(plot = fig6, filename = "../data/figures/Fig6.pdf", device = "pdf",
 ```
 
 
+## Fig S12
+
+
+```{r}
+## Load dependencies for this workflow
+library(pracma)
+library(tidyverse)
+library(patchwork)
+
+# set variables
+vsr  = 1.76
+t0.5 = 7.08 
+kdr  = log(2)/t0.5
+rt <- 0.3929945
+rn0 <- 0.7817625
+rnf <- 0.1187838
+R0wo = vsr/kdr      # Initial steady-state mRNA abundance in early development (without rn0)
+R0wi = vsr*rn0/kdr  # Initial steady-state mRNA abundance in early development (with rn0)
+t0   = 0            # Start, hours
+tf   = 144          # Finish, hours
+
+Rwo = function(t, y) {
+  if(tt == 0){
+    vsr - kdr*y
+  } else {
+    ifelse(t<tt, vsr - kdr*y, vsr*rt - kdr*y)
+  }
+}
+Rwi = function(t, y) {
+  if(tt == 0){
+    ifelse(t<tn, vsr*rn0 - kdr*y, vsr*rnf - kdr*y)
+  } else if(tn < tt){
+    ifelse(t<tn, vsr*rn0 - kdr*y, ifelse(t<tt, vsr*rnf- kdr*y, vsr*rnf*rt - kdr*y))
+  } else if(tn == tt){
+    ifelse(t<tt, vsr*rn0 - kdr*y, vsr*rt*rnf - kdr*y)
+  } else if(tn > tt){
+    ifelse(t<tt, vsr*rn0 - kdr*y, ifelse(t<tn, vsr*rt*rn0 - kdr*y, vsr*rt*rnf - kdr*y))
+  }
+}
+
+dfval <- data.frame(tn = c(72, 48, 72, 96),
+           tt = c(0, 72, 72, 72),
+           title = c("NMD ONLY", "NMD BEFORE", "NMD SIMULTANEOUS", "NMD AFTER"))
+
+plot_non_norm <- do.call(wrap_plots,apply(dfval, 1, function(row){
+  tn <<- as.numeric(row[1])
+  tt <<- as.numeric(row[2])
+  
+  Swo <- ode45(Rwo, t0, tf, R0wo)
+  Swi <- ode45(Rwi, t0, tf, R0wi)
+  Iwo <-  deval(Swo$t, Swo$y, t0:tf, idx = NULL)/R0wo
+  Iwi <-  deval(Swi$t, Swi$y, t0:tf, idx = NULL)/R0wo
+  
+  res.df <- data.frame(time=t0:tf/24,
+             with=Iwi,
+             without=Iwo) %>%
+    pivot_longer(with:without, names_to = "group", values_to = "I") 
+  
+  arrow.df <- res.df %>%
+    filter((time==tn/24 & group=="with")|(time==tt/24 & group=="without")) %>%
+    filter(time != 0)
+  
+  res.df %>% 
+    ggplot(aes(x=time, y=I, group=group, colour=group)) + 
+    geom_line(aes(linetype= group)) +
+    scale_linetype_manual(values = c("dashed","solid")) +
+    scale_colour_manual(values = c("red","black")) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    scale_y_continuous(limits = c(0,1.2), expand = c(0,0), breaks = 0:2/2) +
+    scale_x_continuous(breaks = c(0,6), minor_breaks = 1:5) +
+    geom_segment(data = arrow.df, aes(x=time,xend=time, y=I+0.001,yend=I+0.002),
+                 linewidth=2, lineend = "round", linejoin = "bevel",
+                 arrow = arrow(length = unit(-0.1, "inches")))
+
+})) + plot_layout(nrow = 1)
+
+
+plot_norm <- do.call(wrap_plots,apply(dfval, 1, function(row){
+  tn <<- as.numeric(row[1])
+  tt <<- as.numeric(row[2])
+  
+  Swo <- ode45(Rwo, t0, tf, R0wo)
+  Swi <- ode45(Rwi, t0, tf, R0wi)
+  Iwo <-  deval(Swo$t, Swo$y, t0:tf, idx = NULL)/R0wo
+  Iwi <-  deval(Swi$t, Swi$y, t0:tf, idx = NULL)/R0wo
+  
+  res.df <- data.frame(time=t0:tf/24,
+                      dat=Iwo/Iwi) 
+  
+  arrow.df <- data.frame(time=c(tn,tt)/24,
+                         group=c("with","without")) %>%
+    
+    left_join(res.df) %>%
+    filter(time != 0) 
+
+  
+  res.df %>%
+    ggplot(aes(x=time, y=dat)) + 
+    geom_line(colour="black") +
+    theme_classic() +
+    theme(legend.position = "none") +
+    scale_y_continuous(limits = c(0,10), expand = c(0,0), breaks = 0:5*2) +
+    scale_x_continuous(breaks = c(0,6), minor_breaks = 1:5) +
+    geom_segment(data = arrow.df, aes(x=time,xend=time, y=dat+0.001,yend=dat+0.002,
+                                      colour = group),
+                 linewidth=2, lineend = "round", linejoin = "bevel",
+                 arrow = arrow(length = unit(-0.1, "inches")))
+
+})) + plot_layout(nrow = 1)
+
+figs12 <- wrap_plots(plot_non_norm, plot_norm) + plot_layout(nrow=2) + 
+    plot_annotation(tag_levels = list(c("A","","","","B","","",""))) 
+    
+ggsave(plot = fig1, filename = "../data/figures/FigS12.pdf", device = "pdf", 
+       units = "mm", width = 200, height = 100, dpi = 30, scale = 1.8)
+
+```
 
 
 
@@ -2009,10 +2142,10 @@ cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
 deg.chx <- read_tsv("../data/tables/dge_CDSs_CHX_vs_DMSO_bytimepoint.tsv")
 ds.chx <- read_tsv("../data/tables/ds_iNs_CHX_vs_DMSO_bytimepoint.tsv")
 primary.dat <- read_tsv("../data/tables/ds_primary_CHX_vs_DMSO_bytimepoint.tsv")
-primary.dat <- primary.dat %>% 
-    filter(ds.CHX.sig) %>% 
-    mutate(Sample = ifelse(Sample =="ESC", "ESC", "Neural cells")) %>% 
-    dplyr::select(event.id, Sample, Comparison) %>% 
+primary.dat <- primary.dat %>%
+    filter(ds.CHX.sig) %>%
+    mutate(Sample = ifelse(Sample =="ESC", "ESC", "Neural cells")) %>%
+    dplyr::select(event.id, Sample, Comparison) %>%
     split(~Sample+Comparison)
 
 # Set column names
@@ -2033,16 +2166,16 @@ out.cols <- c(`Gene name` = "gene_name",
      "NC-valid.")
 
 
-dat <- cds.event.time %>% 
-    left_join(deg.chx) %>% 
-    left_join(ds.chx) %>% 
-    filter(ds.CHX.sig, dge.CHX.up) 
+dat <- cds.event.time %>%
+    left_join(deg.chx) %>%
+    left_join(ds.chx) %>%
+    filter(ds.CHX.sig, dge.CHX.up)
 
-dat.primary <- dat %>% 
-    mutate(`CHX-valid.`=F, `NC-valid.`=F) %>% 
-    mutate(`CHX-valid.` = ifelse(Timepoint=="Day0" & event.id %in% primary.dat$ESC.CHX_vs_DMSO$event.id,T,`CHX-valid.`)) %>% 
-    mutate(`CHX-valid.` = ifelse(Timepoint!="Day0" & event.id %in% primary.dat$`Neural cells.CHX_vs_DMSO`$event.id,T,`CHX-valid.`)) %>% 
-    mutate(`NC-valid.` = ifelse(Timepoint=="Day0" & event.id %in% primary.dat$ESC.N_vs_C$event.id,T,`NC-valid.`)) %>% 
+dat.primary <- dat %>%
+    mutate(`CHX-valid.`=F, `NC-valid.`=F) %>%
+    mutate(`CHX-valid.` = ifelse(Timepoint=="Day0" & event.id %in% primary.dat$ESC.CHX_vs_DMSO$event.id,T,`CHX-valid.`)) %>%
+    mutate(`CHX-valid.` = ifelse(Timepoint!="Day0" & event.id %in% primary.dat$`Neural cells.CHX_vs_DMSO`$event.id,T,`CHX-valid.`)) %>%
+    mutate(`NC-valid.` = ifelse(Timepoint=="Day0" & event.id %in% primary.dat$ESC.N_vs_C$event.id,T,`NC-valid.`)) %>%
     mutate(`NC-valid.` = ifelse(Timepoint!="Day0" & event.id %in% primary.dat$`Neural cells.N_vs_C`$event.id,T,`NC-valid.`))
 
 lapply(c("Day0","Day3","Day6","Day12","Day24"), function(d){
@@ -2092,6 +2225,7 @@ event.kendall <- read_tsv("../data/tables/exons_kendall.tsv.gz")
 gene.kendall <- read_tsv("../data/tables/gex_kendall.tsv.gz")
 linares <- read_tsv("../data/tables/linares_siP_vs_SiC_sig.tsv.gz")
 event.ptb.corr <- read_tsv("../data/tables/event_PTBP_corr.tsv.gz")
+novel.ase <- read_tsv("../data/metadata/novel_ase.tsv")
 
 
 out.cols <- c(`Gene name` = "gene_name",
@@ -2100,6 +2234,7 @@ out.cols <- c(`Gene name` = "gene_name",
      `Strand` = "Strand",
      `AS type` = "Type",
      `NMD type` = "ASNMDtype",
+     `Event type` = "Novel",
      `PhastCons score` = "PhastCons.score",
      `AS-NMD event-gene correlation, r` = "psi.gex.PeT",
      `AS-NMD event-gene correlation, P-value` = "psi.gex.PeP",
@@ -2126,7 +2261,7 @@ dat.ptb <- dat %>%
     left_join(event.ptb.corr)
 
 
-dat.ptb %>% 
+ dat.ptb <- dat.ptb %>% 
     mutate(PTB_cons = ifelse(psi.ptb.PeR*DeltaPsi > 0, FALSE, TRUE)) %>% 
     # replace_na(list(PTB_cons=FALSE)) %>% 
     mutate(PTB_cons = ifelse( psi.ptb.PeP < KePco & abs(psi.ptb.PeR) > KeTco, PTB_cons, NA ) ) %>% 
@@ -2134,8 +2269,10 @@ dat.ptb %>%
     mutate(PTB_cons2 = ifelse(DeltaPsi < 0 & PTB_cons, "Activation", PTB_cons2)) %>% 
     mutate(across(.cols = c(PhastCons.score,psi.gex.PeT, psi.gex.PeP, gex.KeT, gex.KeP, psi.KeT, psi.KeP),
            formatC, digits=3)) %>% 
+    mutate(Novel = ifelse(event.id %in% novel.ase$id, "Novel", "Known")) %>% 
     dplyr::select(out.cols) %>% 
-        write.xlsx("../data/supptables/TableS3.xlsx")
+     write.xlsx("../data/supptables/TableS3.xlsx")
+
 ```
 
 
@@ -2143,21 +2280,22 @@ dat.ptb %>%
 ### Table S4
 
 ```{r}
-hipp.ase.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_ase2.tsv.gz")
-gex.kendall <- read_tsv("../data/tables/gex_hippocampus_kendall4.tsv.gz")
+hipp.ase.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_ase.tsv.gz")
+gex.kendall <- read_tsv("../data/tables/gex_hippocampus_kendall.tsv.gz")
 hipp.tx.meta <- read_tsv("../../outputs/tables/Linnarsson_factR_tx.tsv.gz")
 cds <- hipp.tx.meta %>% filter(cds=="yes") %>% 
     pull(gene_id) %>% 
     unique()
+
 
 dat <- hipp.ase.meta %>% 
     filter(gene_id %in% cds) %>% 
     left_join(gex.kendall) %>% 
     mutate(factR.event = ifelse(!is.na(ASNMDtype), T, F)) 
 
-dat <- dat %>% filter(factR.event & gene.cor.estimate>0 & gene.cor.pval<0.05) %>% 
+dat <- dat %>% filter(factR.event, gene.cor.pval<0.05) %>% 
     filter(AStype == "CE", ASNMDtype == "Stimulating") %>% 
-    filter(abs(gex.KeT) > 0.75, gex.KeP < 0.05) %>% 
+    filter(gex.KeP < 0.05) %>%
     mutate(id = paste0(coord,gene_id,strand))
 
 asnmd <- read.xlsx("../data/supptables/TableS3.xlsx", sheetIndex = 1) %>% 
@@ -2180,6 +2318,7 @@ out.cols <- c(`Gene name` = "gene_name",
 
 
 dat %>% 
+    filter(abs(gene.cor.estimate) > 0.2) %>% 
     mutate(overlap = ifelse(id %in% asnmd$id, TRUE, FALSE)) %>% 
     mutate(across(.cols = c(PhastCons.score,gene.cor.estimate, gene.cor.pval, gex.KeT, gex.KeP),
            formatC, digits=3)) %>% 
@@ -2192,49 +2331,6 @@ dat %>%
 
    
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

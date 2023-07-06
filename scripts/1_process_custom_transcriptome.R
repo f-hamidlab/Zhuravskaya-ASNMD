@@ -65,35 +65,15 @@ factR.obj@sets$AS@rowData <- factR.obj@sets$AS@rowData %>%
     dplyr::select(AS_id:ASNMD.in.cds, PhastCons.score)
 
 ## Output GTF
-export(factR.obj@transcriptome, "annotations/final_transcriptome.gtf.gz")
+exportGTF(factR.obj, "annotations/final_transcriptome.gtf.gz")
 
 ## Output metadata at gene, transcript and event levels
-genes(factR.obj) %>% 
-    write_tsv("metadata/genes_metadata.tsv.gz")
-txs(factR.obj) %>% 
-    write_tsv("metadata/txs_metadata.tsv.gz")
-ase(factR.obj) %>% 
-    write_tsv("metadata/events_ASNMD_metadata.tsv.gz")
+exportTable(factR.obj, "metadata/genes_metadata.tsv.gz", data = "gene")
+exportTable(factR.obj, "metadata/txs_metadata.tsv.gz", data = "gene")
+exportTable(factR.obj, "metadata/events_ASNMD_metadata.tsv.gz", data = "AS")
 
 ## Save factR object
 saveRDS(factR.obj, "rds/factR_final_transcriptome.rds")
-
-
-
-######## POTENTIALLY REMOVE
-
-# output transcripts info and coordinates
-factr.obj@transcriptome %>% 
-    as.data.frame() %>% 
-    filter(type == "transcript") %>% 
-    write.table("tables/transcripts_info_final_transcriptome.tsv.gz",
-                sep = "\t", quote = F, col.names = T, row.names = F)
-
-
-
-
-
-
 
 
 
