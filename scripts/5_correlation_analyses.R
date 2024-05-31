@@ -39,13 +39,13 @@ vst.lrt.clust <- vst.lrt %>%
     filter(!is.na(cluster))
 
 ### Calculate Kendall TAUs for clusters
-vst.lrt.clust.kendall <- do.call(bind_rows,lapply(unique(vst.lrt.clust$cluster), 
+vst.lrt.clust.kendall <- do.call(bind_rows,lapply(unique(vst.lrt.clust$cluster),
                                                   function(clust){
                                                       clust.genes <- rownames(gn.clusters[gn.clusters$cluster==clust,])
-                                                      dat <- vst.lrt[clust.genes,] %>% 
-                                                          as.data.frame() %>% 
-                                                          rownames_to_column("gene") %>% 
-                                                          pivot_longer(cols = -gene, values_to = "exp", names_to = "time") %>% 
+                                                      dat <- vst.lrt[clust.genes,] %>%
+                                                          as.data.frame() %>%
+                                                          rownames_to_column("gene") %>%
+                                                          pivot_longer(cols = -gene, values_to = "exp", names_to = "time") %>%
                                                           mutate(time = as.numeric(time))
                                                       kendall.out <- cor.test(dat$exp, dat$time, method = "kendall")
                                                       data.frame(cluster = clust,

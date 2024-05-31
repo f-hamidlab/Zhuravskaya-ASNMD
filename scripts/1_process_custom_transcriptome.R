@@ -2,7 +2,6 @@
 library(tidyverse)
 library(factR2)
 library(rtracklayer)
-devtools::load_all("/home/cdn-bc/Github_repo/factR2/")
 
 ## set variables
 
