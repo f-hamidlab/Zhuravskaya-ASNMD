@@ -1,5 +1,5 @@
 ---
-title: "figure_preparations"
+title: "Preparing figures for publication"
 format: html
 ---
 
@@ -2216,6 +2216,12 @@ dp_gp_ranked %>%
 cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
 event.meta <- read_tsv("../data/metadata/events_ASNMD_metadata.tsv.gz") %>% 
     mutate(event.id = paste0(coord,strand,gene_id))
+ds.chx <- read_tsv("../data/tables/ds_iNs_CHX_vs_DMSO_bytimepoint.tsv")
+cds.event.time <- cds.event.time %>% left_join(ds.chx %>% 
+    dplyr::select(gene_id = Gene, Timepoint, DeltaPsi, Probability, event.id, Psi_A, Psi_B))
+
+
+
 ds.chx <- read_tsv("../data/tables/ds_iNs_CHX_vs_DMSO_bytimepoint.tsv") %>% 
     dplyr::select(event.id, gene_name, Coord, Strand) %>% 
     distinct()
@@ -2238,6 +2244,7 @@ out.cols <- c(`Gene name` = "gene_name",
      `PhastCons score` = "PhastCons.score",
      `AS-NMD event-gene correlation, r` = "psi.gex.PeT",
      `AS-NMD event-gene correlation, P-value` = "psi.gex.PeP",
+     `AS-NMD event-gene correlation, FDR` = "psi.gex.PeF",
      `Gene trajectory rank` = "rank_by_KeT",
      `Gene trend, τ` = "gex.KeT",
      `Gene trend, P-value` = "gex.KeP",
@@ -2245,8 +2252,20 @@ out.cols <- c(`Gene name` = "gene_name",
      `AS-NMD trend, P-value` = "psi.KeP",
      `Predicted PTBP1 effect on AS-NMD event` = "PTB_cons2")
 
+dco <-  0.25      # DeltaPsi cutoff
+yco <-  0.95       # Probability cutoff
+dco <-  0.1    # DeltaPsi cutoff
+yco <-  0.9 
+
 dat <- cds.event.time %>% 
-    filter(ds.CHX.sig, psi.gex.sig, !is.na(rank_by_KeT)) %>%
+    mutate(pass_positive = (Probability > yco & DeltaPsi > dco) | 
+               (Probability <= yco & (Psi_A+Psi_B)/2 > 0.9)) %>% 
+    mutate(pass_negative = (Probability > yco & DeltaPsi < -dco) | 
+               (Probability <= yco & (Psi_A+Psi_B)/2 < 0.1)) %>% 
+    mutate(ds.CHX.sig = ifelse((ASNMDtype == "Stimulating" & pass_positive) | 
+                                       (ASNMDtype == "Repressing" & pass_negative),
+                                  TRUE, FALSE)) %>% 
+    dplyr::select(-pass_positive, -pass_negative) %>% 
     left_join(ds.chx) %>% 
     distinct(event.id, .keep_all = T) %>% 
     left_join(event.meta %>% dplyr::select(event.id,PhastCons.score))
@@ -2258,10 +2277,11 @@ dat.ptb <- dat %>%
     left_join(gene.kendall) %>% 
     arrange(desc(psi.gex.PeT)) %>% 
     left_join(linares %>% dplyr::select(event.id = id, DeltaPsi)) %>% 
-    left_join(event.ptb.corr)
+    left_join(event.ptb.corr) %>% 
+    filter(psi.gex.PeT > 0.5) %>%
+    mutate(psi.gex.PeF = p.adjust(psi.gex.PeP, method = "fdr")) 
 
-
- dat.ptb <- dat.ptb %>% 
+ dat.ptb %>% 
     mutate(PTB_cons = ifelse(psi.ptb.PeR*DeltaPsi > 0, FALSE, TRUE)) %>% 
     # replace_na(list(PTB_cons=FALSE)) %>% 
     mutate(PTB_cons = ifelse( psi.ptb.PeP < KePco & abs(psi.ptb.PeR) > KeTco, PTB_cons, NA ) ) %>% 
@@ -2271,7 +2291,7 @@ dat.ptb <- dat %>%
            formatC, digits=3)) %>% 
     mutate(Novel = ifelse(event.id %in% novel.ase$id, "Novel", "Known")) %>% 
     dplyr::select(out.cols) %>% 
-     write.xlsx("../data/supptables/TableS3.xlsx")
+     write.xlsx("../data/supptables/TableS3_stringent.xlsx")
 
 ```
 
