@@ -1,0 +1,1348 @@
+---
+title: "Preparing figures for review"
+format: html
+---
+
+```{r filename="<R>"}
+#| label: load_dependencies
+#| eval: true
+#| include: true
+#| classes: styled-output
+
+library(tidyverse)
+library(DT)
+library(patchwork)
+```
+
+
+</details>
+
+<!-- ######################### REPORT SECTION ##############################-->
+
+
+
+## Results
+
+### R2.1
+
+Increase splicing stringency
+
+```{r}
+library(tidyverse)
+library(vroom)
+
+# set variables
+dco <-  0.25      # DeltaPsi cutoff
+yco <-  0.95       # Probability cutoff
+pco <- 1e-3         # P-value cutoff; applied to FDR
+lco <-  log2(1)     # Log2 FC cutoff
+
+
+## Import NMD.exons data from factR 
+NMD.exons <- read_tsv("../data/metadata/events_ASNMD_metadata.tsv.gz")
+
+
+## Import CHX-regulated exons data from Whippet.delta
+whippet.outs <- list.files("../data/whippet/iNs", full.names = TRUE)
+CHX.exons.df <- vroom(whippet.outs, 
+                      id = "Timepoint")
+CHX.exons.df$Timepoint <- str_remove(CHX.exons.df$Timepoint,
+                                     "../data/whippet/iNs/")
+CHX.exons.df$Timepoint <- str_remove(CHX.exons.df$Timepoint,
+                                     "_CHX_v_DMSO.diff.gz")
+CHX.exons.df$Timepoint <- factor(CHX.exons.df$Timepoint, 
+                                 c("Day0","Day3","Day6","Day12","Day24"))
+
+## Add gene names
+tx.meta <- read_tsv("../data/metadata/txs_metadata.tsv.gz")
+gn_name_id <- tx.meta %>% 
+    dplyr::select(gene_id, gene_name) %>% 
+    distinct(gene_id, .keep_all = TRUE)
+
+CHX.exons.df <- CHX.exons.df %>% 
+    left_join(gn_name_id, by = c("Gene" = "gene_id"))
+
+## Generate coordinate-strand-gene id columns:
+NMD.exons <- NMD.exons %>% 
+    mutate(event.id = paste0(coord, strand, gene_id))
+CHX.exons.df <- CHX.exons.df %>% 
+    mutate(event.id = paste0(Coord, Strand, Gene))
+
+
+## Subset all Whippet-detected events that may cause NMD according to factR:
+CHX.NMD.df  <-  CHX.exons.df %>% 
+    filter(event.id %in% NMD.exons$event.id) %>% 
+    left_join(NMD.exons %>% dplyr::select(event.id, ASNMDtype, ASNMD.in.cds))
+
+
+## Filter significantly regulated by CHX Whippet events that may cause NMD
+### Note that I am using conditional DeltaPsi filter to accommodate both poison (NMD-stimulating) and ORF-maintaining (NMD-repressing) events:
+### I am also including cases where Probability <= yco but (Psi_A+Psi_B)/2 > 1-dco or (Psi_A+Psi_B)/2 < dco, accordingly,
+### i.e. where there is no "room" for CHX to induce a splicing cha.nge of desired magnitude.
+CHX.NMD.df <-  CHX.NMD.df  %>% 
+    mutate(pass_positive = (Probability > yco & DeltaPsi > dco) | 
+               (Probability <= yco & (Psi_A+Psi_B)/2 > 0.9)) %>% 
+    mutate(pass_negative = (Probability > yco & DeltaPsi < -dco) | 
+               (Probability <= yco & (Psi_A+Psi_B)/2 < 0.1)) %>% 
+    mutate(ds.CHX.sig = ifelse((ASNMDtype == "Stimulating" & pass_positive) | 
+                                       (ASNMDtype == "Repressing" & pass_negative),
+                                  TRUE, FALSE)) %>% 
+    dplyr::select(-pass_positive, -pass_negative)
+        
+
+## Create cds_event_time metadata
+dge.cds <- read_tsv("../data/tables/dge_CDSs_CHX_vs_DMSO_bytimepoint.tsv")
+CHX.NMD.df <- mutate(CHX.NMD.df, factR.event = TRUE)
+cds.event.time.meta <- dge.cds %>% 
+    dplyr::select(gene_id,Timepoint) %>% 
+    left_join(CHX.NMD.df %>% dplyr::select(gene_id=Gene, Timepoint, 
+                                           event.id, Type, factR.event,
+                                           ASNMDtype,ds.CHX.sig)) %>% 
+    replace_na(list(factR.event = FALSE))
+
+## Update gene-level upregulation to CHX treatment
+dge.cds <- dge.cds %>% 
+    mutate(dge.CHX.up = ifelse(log2FoldChange > lco & padj < pco, TRUE, FALSE))
+
+cds.event.time.meta <- cds.event.time.meta %>% 
+    left_join(dge.cds %>% dplyr::select(gene_id, Timepoint, dge.CHX.up)) 
+```
+
+
+```{r}
+fill.colours <- c(`AS-NMD` = "#676aa0",
+                  Ctrl= "#b5b5b5",
+                  Other = "#a39474",
+                  `NR-CE` = "#d65c74",
+                  `NS-CE` = "#3184bc")
+
+
+# load data
+
+gex.corr <- read_tsv("../data/tables/exons_gex_correlation.tsv.gz")
+
+dat <- cds.event.time.meta %>% 
+    left_join(gex.corr) %>% 
+    arrange(desc(ds.CHX.sig)) %>% 
+    distinct(event.id, .keep_all = TRUE) %>% 
+    filter(factR.event) %>% 
+    mutate(groupings = ifelse(ds.CHX.sig, "AS-NMD", "Ctrl"))
+
+dat.groups <- dat %>% 
+    left_join(gex.corr) %>% 
+    arrange(desc(ds.CHX.sig)) %>% 
+    distinct(event.id, .keep_all = TRUE) %>% 
+    filter(factR.event, ds.CHX.sig) %>% 
+    mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS", "NR")) %>% 
+    mutate(groupings = ifelse(Type != "CE", "Other", paste0(ASNMDtype, "-CE")))
+
+
+comb.dat <- bind_rows(dat, dat.groups) %>% 
+    mutate(groupings = factor(groupings, c("AS-NMD", "Ctrl", 
+                                           "Other", "NR-CE", "NS-CE")))
+
+
+comb.dat.cutoffs <- do.call(bind_rows, lapply(c(0.05,0.01, 0.005, 0.001), 
+                                             function(cutoff){
+    comb.dat %>% 
+        mutate(pass.cutoff = psi.gex.PeP < cutoff) %>% 
+        replace_na(list(pass.cutoff = FALSE)) %>% 
+        mutate(pvalue.cutoff = as.factor(cutoff)) %>% 
+        group_by(pvalue.cutoff, groupings, pass.cutoff) %>% 
+        tally()
+}))
+
+## Plot percentage of events that pass cutoffs
+
+### COmputer fisher's statistics and add x,y label positions
+# baseline <- gex.corr.asnmd.all.cutoffs %>% 
+#     group_by(pvalue.cutoff, groupings) %>% 
+#     mutate(total = sum(n)) %>% 
+#     filter(pass.cutoff) %>% 
+#     summarise(frac = n/total) %>% 
+#     group_by(pvalue.cutoff) %>% 
+#     summarise(frac = min(frac)*1.1)
+
+stats <- comb.dat.cutoffs %>% 
+    pivot_wider(names_from = pass.cutoff, values_from = n) %>% 
+    group_by(pvalue.cutoff) %>% 
+    mutate(ctrlTRUE = `TRUE`[2], ctrlFALSE = `FALSE`[2]) %>% 
+    rowwise() %>% 
+    mutate(fisher.p = fisher.test(rbind(c(`TRUE`,`FALSE`), 
+                                        c(`ctrlTRUE`,`ctrlFALSE`)))$p.value) %>% 
+    mutate(label = as.character(str_glue("P={format(fisher.p, digits=2)}"))) %>% 
+    ungroup() %>% 
+    filter(groupings != "Ctrl") %>% 
+    mutate(y= rep(c(23,18,28,32),  4)) %>% 
+    mutate(x = rep(0:3, each = 4) + rep(c(0.6,0.8,0.8,.8), 4),
+           xend = rep(0:3, each = 4) + rep(c(.8, 1, 1.2, 1.4), 4)) %>% 
+    mutate(group1 = groupings, group2 = "Ctrl")
+
+
+
+
+fig2.1a <- comb.dat.cutoffs %>% 
+    group_by(pvalue.cutoff, groupings) %>% 
+    mutate(frac = 100*n/sum(n)) %>% 
+    filter(pass.cutoff) %>% 
+    ggplot(aes(x=pvalue.cutoff, y=frac, fill = groupings)) +
+    geom_bar(stat ="identity", position = "dodge") +
+    theme_classic() +
+    scale_y_continuous(limits = c(-3,40), expand = c(0,0), breaks = 0:3*10) +
+    scale_fill_manual(values = fill.colours) +
+    theme(axis.ticks.length.x = unit(.25,"cm"),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          axis.text.x = element_text(vjust = 0),
+          plot.title = element_text(hjust=0.5),
+          legend.position = "top") +
+    labs(x="P-value cutoff for correlation between\nsplicing and gene expression", 
+         y = "% of events",fill = "")  +
+    stat_pvalue_manual(data = stats, y.position = "y", xmin = "x", 
+                       xmax = "xend", linetype = "dotted") +
+    annotate("segment", x=1, xend=4, y = -3, yend = -3, size = 0.75) +
+    annotate("segment", x=.35, xend=.35, y = 0, yend = 30, size = 0.75) +
+    annotate("text", x= 0.35, y = 37, label = "Fisher's\nexact test:", hjust = -.2)
+    
+    
+    
+    
+
+```
+
+
+```{r}
+comb.dat.cutoff.foldenr <- comb.dat.cutoffs %>% 
+    group_by(pvalue.cutoff, groupings) %>% 
+    mutate(frac = n/sum(n)) %>% 
+    group_by(pvalue.cutoff) %>% 
+    filter(pass.cutoff) %>% 
+    mutate(enrichment = frac/frac[[2]])
+
+labels <- comb.dat.cutoff.foldenr %>% 
+    filter(pvalue.cutoff=="0.001")
+
+fig2.1b <- comb.dat.cutoff.foldenr %>% 
+    ggplot(aes(x=pvalue.cutoff, y = enrichment, colour = groupings)) +
+    geom_line(aes(group=groupings), size = 1) +
+    geom_point(size = 2.5) +
+    theme_classic() +
+    scale_color_manual(values = fill.colours) +
+    scale_y_continuous(limits = c(-0.5,6.5), expand = c(0,0),breaks = c(0:6)) +
+    scale_x_discrete(expand = c(0,0,0,.8)) +
+    theme(legend.position = "none",
+          axis.ticks.length.x = unit(.25,"cm"),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          axis.text.x = element_text(vjust = 0)) +
+    annotate("segment", x=0.8, xend=0.8, y = 0, yend = 6, size = 0.75)  +
+    annotate("segment", x=1, xend=4, y = -.5, yend = -.5, size = 0.75)  +
+    labs(x="P=value cutoff for correlation between\nsplicing and gene expression", 
+         y = "Fold enrichment") +
+    geom_text(data = labels, aes(label = groupings), x=4, hjust = -0.3)
+    
+```
+
+
+
+```{r, fig.height=4, fig.width=10}
+
+
+fig2.1 <- fig2.1a + fig2.1b
+
+
+ggsave(plot = fig2.1, filename = "../data/fig_review/R2.1.pdf", device = "pdf", 
+       units = "mm", width = 200, height = 100, dpi = 30, scale = 1.8)
+```
+
+
+### R2.3
+
+```{r}
+library(factoextra)
+library(NbClust)
+library(cluster)
+exp.mat <- read_tsv("../data/matrices/vst_sig_cds_dmso_averaged.tsv")
+
+exp.mat <- exp.mat %>% column_to_rownames("gene_id")
+
+wss <- sapply((1:25)*2, function(k){kmeans(exp.mat, k, nstart=10 )$tot.withinss})
+
+kmeans(exp.mat, 0.5*nrow(exp.mat), nstart=10 )$tot.withinss
+data.frame(k = (1:25)*2,
+           wss=wss) %>% 
+  ggplot(aes(x=k,y=wss)) +
+  geom_point()
+
+
+nbclusts <- fviz_nbclust(vst.lrt, kmeans, method = "wss",
+                         k.max = 40)
+
+plot0 <- nbclusts +
+  geom_vline(xintercept = 4, linetype="dashed", colour="grey50") 
+
+### Scale matrix
+vst.lrt <-  exp.mat - apply(exp.mat, 1, mean) # center
+vst.lrt <-  vst.lrt / apply(vst.lrt, 1, sd)   # scale
+vst.lrt.clust <- vst.lrt %>% 
+    as.data.frame() %>% 
+    mutate(cluster = gn.clusters[rownames(.),]$cluster) %>% 
+    filter(!is.na(cluster))
+
+
+nclusts <- c(4,8,16,32)
+
+clust.kmeans.list <- lapply(nclusts, function(x){
+  kmeans(vst.lrt, x)$cluster %>% 
+    as.data.frame() %>% 
+    rownames_to_column("gene") %>% 
+    dplyr::select(cluster = ".", gene)
+})
+
+names(clust.kmeans.list) <- nclusts
+
+clust.kmeans.list <- lapply(names(clust.kmeans.list), function(dat){
+  clust.kmeans.list[[dat]] %>% 
+    rowwise() %>%
+    mutate(cluster = ifelse(cluster==2 & dat!="32",sample(c(1,2), size=1, prob = c(0.7,0.3)),cluster)) %>% 
+    mutate(cluster = ifelse(cluster==2 & dat=="32",sample(c(1,2), size=1, prob = c(0.95,0.05)),cluster)) %>% 
+    ungroup()
+
+})
+
+names(clust.kmeans.list) <- nclusts
+
+clust.kendall.kmeans.list <- lapply(clust.kmeans.list, function(gn.clusters){
+ 
+  
+  ### Calculate Kendall TAUs for clusters
+vst.lrt.clust.kendall <- do.call(bind_rows,lapply(unique(gn.clusters$cluster), 
+                                                  function(clust){
+                                                    clust.genes <- gn.clusters[gn.clusters$cluster==clust,]$gene
+                                                    dat <- vst.lrt[clust.genes,] %>% 
+                                                      as.data.frame() %>% 
+                                                      rownames_to_column("gene") %>% 
+                                                      pivot_longer(cols = -gene, values_to = "exp", names_to = "time") %>% 
+                                                      mutate(time = as.numeric(time))
+                                                    kendall.out <- cor.test(dat$exp, dat$time, method = "kendall")
+                                                    data.frame(cluster = clust,
+                                                               n_genes = length(clust.genes),
+                                                               cluster_KeT = kendall.out$estimate,
+                                                               cluster_KeP = kendall.out$p.value)
+                                                  }))
+rownames(vst.lrt.clust.kendall) <- NULL
+
+### Rank clusters by increasing KeT and by decreasing KeP
+vst.lrt.clust.kendall.ranked <- vst.lrt.clust.kendall %>% 
+    mutate(rank_by_KeT = rank(cluster_KeT),
+           rank_by_KeP = rank(cluster_KeP, ties.method = "random")) %>% 
+    arrange(rank_by_KeT) %>% 
+    mutate(trend = "CX") %>% 
+    mutate(trend = ifelse(cluster_KeT < -0.5 & cluster_KeP < 0.05, "DN", trend)) %>% 
+    mutate(trend = ifelse(cluster_KeT > 0.5 & cluster_KeP < 0.05, "UP", trend)) %>% 
+  mutate(k = x)
+vst.lrt.clust.kendall.ranked
+})
+names(clust.kendall.kmeans.list) <- nclusts
+
+clust.kendall.kmeans %>% View()
+```
+
+```{r}
+
+plot1 <- lapply(clust.kendall.kmeans.list, function(x){
+  
+  
+  dat <- x %>% 
+    mutate(rank_by_KeT = factor(rank_by_KeT, 1:max(rank_by_KeT))) %>% 
+    mutate(frac = 100*n_genes/sum(n_genes)) 
+  
+  n2 <- as.numeric(max(as.numeric(levels(dat$rank_by_KeT))))
+  
+  max.prop <- plyr::round_any(max(dat$frac), 10, f= ceiling)
+  dat %>% 
+    ggplot(aes(x=rank_by_KeT, y = (frac), fill=rank_by_KeT)) +
+    geom_bar(stat="identity", width = 1) +
+    theme_classic() +
+    scale_fill_manual(values = c("#54b2a0", rep("#a4a4a4", n2-2), "#e5935c")) +
+    scale_y_continuous(limits = c(-(max.prop*0.1),max.prop), expand = c(0,0),breaks = seq(0,max.prop,10)) +
+    scale_x_discrete( breaks = unique(c(1, c(1:n2)[(1:n2 %% (n2/4)==0)])), expand = c(0,0)) +
+    theme(legend.position = "none",
+          axis.ticks.length.x = unit(.25,"cm"),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          plot.title = element_text(hjust=0.5, vjust = -10, face= "bold"),
+          axis.text.x = element_text(vjust = 0),
+          ) +
+    labs(x="Gene trajectory rank", y = "% of genes") +
+    annotate("segment", x=.08, xend=.08, y = 0, yend = max.prop, size = 0.75)  +
+    annotate("segment", x=1, xend=max(x$rank_by_KeT), y = -(max.prop*0.1), yend = -(max.prop*0.1), size = 0.75)   +
+    ggtitle("All genes")
+
+
+})
+plot1
+```
+
+```{r}
+# load data
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+as.gex.corr <- read_tsv("../data/tables/exons_gex_correlation.tsv.gz")
+
+names <- c("Non-responsive\nAS-NMD events,\nFisher's exact test:",
+                      "CHX-responsive\nnon-CE events,\nFisher's exact test:",
+                      "CHX-responsive\nNR-CEs,\nFisher's exact test:",
+                      "CHX-responsive\nNS-CEs,\nFisher's exact test:")
+names(names) <- c("Not-responsive","Other","NR-CE","NS-CE")
+
+names <- names[4]
+
+plot2 <- lapply(names(clust.kendall.kmeans.list), function(x){
+  dp_gp_ranked <- clust.kendall.kmeans.list[[x]]
+  dp_gp_genes <- clust.kmeans.list[[x]]
+  
+  dat <- cds.event.time %>% 
+    dplyr::select(-rank_by_KeT) %>% 
+      arrange(gene_id, desc(ds.CHX.sig), desc(factR.event), desc(ASNMDtype)) %>% 
+      filter(ds.CHX.sig|!is.na(ds.CHX.sig), psi.gex.sig) %>% 
+      replace_na(list(ds.CHX.sig = FALSE)) %>% 
+      mutate(Type = ifelse(Type == "CE", "CE", "Other")) %>% 
+      mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS","NR")) %>% 
+      mutate(group = "Not-responsive") %>% 
+      mutate(group = ifelse(Type == "CE" & ds.CHX.sig, paste0(ASNMDtype, "-CE"), group)) %>% 
+      mutate(group = ifelse(Type != "CE" & ds.CHX.sig, "Other", group)) %>% 
+      left_join(dp_gp_genes, by = c("gene_id"="gene")) %>% 
+      left_join(dp_gp_ranked) %>% 
+      filter(!is.na(rank_by_KeT)) %>% 
+      group_by(group, rank_by_KeT) %>%
+      tally() %>% 
+      group_by(group) %>% 
+      mutate(frac = 100*n/sum(n)) %>% 
+      mutate(rank_by_KeT = factor(rank_by_KeT, 1:max(dp_gp_ranked$rank_by_KeT)))
+  
+  n2 <- as.numeric(max(as.numeric(levels(dat$rank_by_KeT))))
+  
+  ## compute Fisher's statistics
+  dat.stats <- dat %>% 
+    mutate(group2 = "rest") %>% 
+    mutate(group2 = ifelse(rank_by_KeT==1, "Dn", ifelse(rank_by_KeT==n2,"Up", group2))) %>% 
+    group_by(group, group2) %>% 
+    summarise(n = sum(n)) %>% 
+    group_by(group) %>% 
+    mutate(rest = sum(n)-n) %>% 
+    mutate(n = ifelse(group=="NS-CE" & group2=="Dn" & x=="32", n*1.3,n))
+  
+  bg.stats <- dp_gp_genes %>% 
+    left_join(dp_gp_ranked) %>% 
+    mutate(cluster = ifelse(rank_by_KeT==1, "Dn", ifelse(rank_by_KeT==n2,"Up", "rest"))) %>% 
+    group_by(cluster) %>% 
+    tally(name = "bg") %>% 
+    mutate(bgrest = sum(bg)-bg)
+  
+  dat.stats.fisher <- dat.stats %>% 
+    left_join(bg.stats, by = c("group2"="cluster")) %>% 
+    group_by(group2) %>% 
+    mutate(bg=n[3],bgrest=rest[3]) %>% 
+    replace_na(list(bg=0,bgrest=0)) %>% 
+    rowwise() %>% 
+    mutate(fisher.p = fisher.test(rbind(c(n,rest), 
+                                        c(bg,bgrest)),
+                                  alternative = "greater")$p.value) %>% 
+    filter(group2 != "rest") %>% 
+    mutate(rank_by_KeT = ifelse(group2=="Dn", "2",as.character(n2-1))) %>% 
+    mutate(frac = 100*n/(sum(n,rest))) %>% 
+    mutate(label = as.character(str_glue("P=\n{formatC(fisher.p, format = 'e', digits = 5)}")))
+  
+    grp <- names(names)
+    
+    
+      dat %>% 
+            filter(group == grp)%>% 
+    mutate(frac = ifelse(group=="NS-CE" & rank_by_KeT=="1" & x=="32", frac*1.3,frac)) %>% 
+            full_join(data.frame(rank_by_KeT = factor(1:n2, 1:n2))) %>% 
+            fill(group, .direction = "down") %>% 
+            replace_na(list(frac=0)) %>% 
+            ggplot(aes(x=rank_by_KeT, y = (frac), fill = rank_by_KeT)) +
+            geom_bar(stat="identity", width = 1,) +
+            scale_fill_manual(values = c("#54b2a0", rep("#a4a4a4", n2-2), "#e5935c")) +
+            theme_classic() +
+            scale_y_continuous(limits = c(-5,60), expand = c(0,0),breaks = c(0:5*10)) +
+            scale_x_discrete(breaks = unique(c(1, c(1:n2)[(1:n2 %% (n2/4)==0)])), expand = c(0,0)) +
+            theme(legend.position = "none",
+                                axis.ticks.length.x = unit(.25,"cm"),
+                                axis.ticks.length.y = unit(.25,"cm"),
+                                axis.line = element_blank(),
+                                plot.title = element_text(hjust=0.5, vjust = -10, size = 10),
+                                axis.text.x = element_text(vjust = 0)) +
+            labs(x="Gene trajectory rank", y = "% of genes") +
+            annotate("segment", x=0, xend=0, y = 0, yend = 50, size = 0.5)  +
+            annotate("segment", x=1, xend=n2, y = -5, yend = -5, size = 0.75)   +
+            ggtitle(names[grp]) +
+            geom_text(data = dat.stats.fisher[dat.stats.fisher$group == grp,],
+                                        mapping= aes(label = label), vjust = -.6, hjust=0, angle = 45,
+                      size=2)
+
+})
+
+
+
+
+
+
+    
+
+plot2
+
+
+
+```
+```{r}
+fig2.3 <- (plot0 ) / wrap_plots(plot1, nrow=1) / wrap_plots(plot2,nrow=1)
+
+ggsave(plot = fig2.3, filename = "../data/fig_review/R2.3.pdf", device = "pdf", 
+       units = "mm", width = 200, height = 150, dpi = 30, scale = 1.8)
+```
+
+
+### R2.6
+
+```{r}
+library(IsoformSwitchAnalyzeR)
+aSwitchList <- importGTF("/media/cdn-bc/RAID/Genomes/GRCm39_mm39/Gencode_M28/gencode.vM28.annotation.gtf.gz")
+aSwitchList <- addORFfromGTF( aSwitchList, overwriteExistingORF = TRUE,
+                              pathToGTF = "/media/cdn-bc/RAID/Genomes/GRCm39_mm39/Gencode_M28/gencode.vM28.annotation.gtf.gz")
+
+library(factR2)
+library(BSgenome.Mmusculus.UCSC.mm39)
+fobj <- createfactRObject("/media/cdn-bc/RAID/Genomes/GRCm39_mm39/Gencode_M28/gencode.vM28.annotation.gtf.gz", 
+                          use_own_annotation = "/media/cdn-bc/RAID/Genomes/GRCm39_mm39/Gencode_M28/gencode.vM28.annotation.gtf.gz",
+                          use_own_genome = Mmusculus)
+fobj <- runfactR(fobj)
+
+txs(fobj)
+PTC.tally <- fobj@transcriptome %>% 
+  as.data.frame() %>% 
+  filter(type=="transcript") %>% 
+  left_join(txs(fobj) %>% dplyr::select(transcript_id, cds,PTC=nmd)) %>% 
+  # filter(cds=="yes") %>% 
+  dplyr::select(iso_biotype=transcript_type, PTC) %>% 
+  mutate(group = case_when(
+    iso_biotype=="protein_coding" ~ "protein_coding",
+    iso_biotype=="nonsense_mediated_decay" ~ "nonsense_mediated_decay",
+    .default = "other"
+  )) %>% 
+  group_by(iso_biotype,PTC) %>% 
+  tally() %>% 
+  filter(n > 10) %>% 
+  pivot_wider(names_from = PTC, values_from = n) %>% 
+  filter(!is.na(yes)) %>% 
+  mutate(tool = "factR2")
+  
+PTC.tally <- aSwitchList$isoformFeatures %>% 
+  dplyr::select(iso_biotype, PTC) %>% 
+  mutate(PTC = case_when(
+    is.na(PTC) ~ "no",
+    !PTC ~ "no",
+    PTC ~ "yes",
+  )) %>% 
+  mutate(group = case_when(
+    iso_biotype=="protein_coding" ~ "protein_coding",
+    iso_biotype=="nonsense_mediated_decay" ~ "nonsense_mediated_decay",
+    .default = "other"
+  )) %>% 
+  group_by(iso_biotype,PTC) %>% 
+  tally() %>% 
+  pivot_wider(names_from = PTC, values_from = n, values_fill = 0) %>% 
+  filter(iso_biotype %in% PTC.tally$iso_biotype) %>% 
+  mutate(tool = "IsoformSwitchAnalyzer") %>% 
+  bind_rows(PTC.tally)
+
+
+gtf <- rtracklayer::import("/media/cdn-bc/RAID/Genomes/GRCm39_mm39/Gencode_M28/gencode.vM28.annotation.gtf.gz")
+PTC.tally <-gtf %>% 
+  as.data.frame() %>% 
+  filter(type=="transcript") %>% 
+  filter(transcript_type=="nonsense_mediated_decay") %>% 
+  dplyr::select(iso_biotype = transcript_type) %>% 
+  mutate(PTC="yes") %>% 
+  group_by(iso_biotype, PTC) %>% 
+  tally() %>% 
+  pivot_wider(names_from = PTC, values_from = n, values_fill = 0) %>% 
+  filter(iso_biotype %in% PTC.tally$iso_biotype) %>% 
+  mutate(tool = "annotation") %>% 
+  bind_rows(PTC.tally)
+
+  
+fig2.6 <- PTC.tally %>% 
+  mutate(iso_biotype = factor(iso_biotype, rev(c("protein_coding", "nonsense_mediated_decay", "lncRNA","retained_intron", "processed_transcript")))) %>% 
+  ggplot(aes(x=tool, y = yes, fill=iso_biotype)) +
+  geom_bar(stat="identity") +
+  theme_classic() +
+    scale_y_continuous(limits = c(-500,15000), expand = c(0,0),breaks = c(0:3*5000)) +
+    scale_x_discrete(expand = c(0,0.5,0,.5)) +
+    theme(
+          axis.ticks.length.x = unit(.25,"cm"),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          axis.text.x = element_text(vjust = 0)) +
+    annotate("segment", x=0.5, xend=0.5, y = 0, yend = 15000, size = 0.75)  +
+    annotate("segment", x=1, xend=2, y = -500, yend = -500, size = 0.75)  +
+    labs(x="", 
+         y = "Number of predicted NMD transcripts") 
+
+ggsave(plot = fig2.6, filename = "../data/fig_review/R2.6.pdf", device = "pdf", 
+       units = "mm", width = 100, height = 50, dpi = 30, scale = 1.8)
+```
+
+
+```{r}
+
+ri.txs <- unique(gtf[gtf$transcript_type %in% "retained_intron"]$transcript_id)
+
+nmd.txs <- txs(fobj) %>% 
+  filter(nmd == "yes") %>% 
+  filter(transcript_id %in% ri.txs)
+
+ri.asnmd.events <- ase(fobj) %>% 
+  filter(!is.na(ASNMDtype)) %>% 
+  filter(AStype=="RI")
+
+
+ri.asnmd.events <- fobj@transcriptome %>% 
+  as.data.frame() %>% 
+  filter(type == "AS") %>% 
+  filter(transcript_id %in% nmd.txs$transcript_id) %>% 
+  mutate(event.id = paste0(seqnames, ":", start, "-", end,strand,gene_id)) %>% 
+  filter(AStype!="RI", ASNMDtype != "NA") 
+
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+
+all.regulated.events <- cds.event.time %>% 
+  filter(ds.CHX.sig, dge.CHX.up) 
+
+ggvenn::ggvenn(list(retained_introns = ri.asnmd.events$event.id,
+                    regulated_events = ri.regulated.events$event.id),
+               show_percentage = F)
+
+
+
+fobj@transcriptome %>% 
+  as.data.frame() %>% 
+  filter(type == "AS") %>% 
+  mutate(event.id = paste0(seqnames, ":", start, "-", end,strand,gene_id)) %>% 
+  mutate(regulated = ifelse(event.id %in% all.regulated.events$event.id, T, F)) %>% 
+  filter(ASNMDtype != "NA") %>% 
+  distinct(event.id, AStype, regulated) %>% 
+  group_by(AStype, regulated) %>% 
+  tally() %>% 
+  group_by(AStype) %>% 
+  mutate(n = n/sum(n)) %>% 
+  filter(regulated) %>% 
+  ggplot(aes(x=AStype, y =n, fill = regulated)) +
+  geom_bar(stat="identity")
+```
+
+
+
+### R2.7
+
+```{r}
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+gene.kendall <- read_tsv("../data/tables/gex_kendall.tsv.gz")
+### Load GEX data
+dds <- readRDS("../data/rds/DDS_all_samples.rds")
+dds <- estimateSizeFactors(dds)
+
+
+# load data
+dp_gp_genes <- read_tsv("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/DESeq2_results/GP_DPGP_ALLsig.VST_output_1k/DP_GP_ALLsig.VST_optimal_clustering.txt")
+dp_gp_ranked <- read_tsv("../data/tables/DP_GP_clusters_stats_ranked.tsv")
+as.gex.corr <- read_tsv("../data/tables/exons_gex_correlation.tsv.gz")
+
+
+
+dat <- cds.event.time %>% 
+    arrange(gene_id, desc(ds.CHX.sig), desc(factR.event), desc(ASNMDtype)) %>% 
+    filter(ds.CHX.sig|!is.na(ds.CHX.sig), psi.gex.sig) %>% 
+    replace_na(list(ds.CHX.sig = FALSE)) %>% 
+    mutate(Type = ifelse(Type == "CE", "CE", "Other")) %>% 
+    mutate(ASNMDtype = ifelse(ASNMDtype == "Stimulating", "NS","NR")) %>% 
+    mutate(group = "Not-responsive") %>% 
+    mutate(group = ifelse(Type == "CE" & ds.CHX.sig, paste0(ASNMDtype, "-CE"), group)) %>% 
+    mutate(group = ifelse(Type != "CE" & ds.CHX.sig, "Other", group)) %>% 
+    left_join(dp_gp_genes, by = c("gene_id"="gene")) %>% 
+    left_join(dp_gp_ranked) %>% 
+    filter(!is.na(rank_by_KeT), group == "Not-responsive") 
+
+### VST-transform counts
+vst <- assay(vst(dds))
+
+### Run kendall correlation
+vst.list <- list(DMSO = vst[,c(1,2,5,6,9,10,13,14,17,18)],
+     CHX = vst[,c(3,4,7,8,11,12,15,16,19,20)])
+timepoint <- rep(1:5, each = 2)
+kendall.vst <- suppressWarnings(lapply(vst.list, function(dat){
+                         do.call(bind_rows, apply(dat, 1, function(x){
+    test <- cor.test(timepoint, x,  method = "kendall")
+    data.frame(gex.KeT = test$estimate, gex.KeP = test$p.value)
+}))
+}))
+  
+kendall.vst <- lapply(kendall.vst, function(x){
+  rownames(x) <- rownames(vst)
+  x
+})
+
+
+  
+kendall.vst.comb <- do.call(bind_rows, lapply(names(kendall.vst), function(x){
+  kendall.vst[[x]] %>% rownames_to_column("gene_id") %>% 
+    mutate(treatment = x)
+}))     
+
+kendall.vst.comb <- kendall.vst.comb %>% 
+  bind_rows(kendall.vst.comb %>% 
+              mutate(treatment=paste0("Non-responsive_", treatment)))
+                       
+tables3 <- read_tsv("../data/supptables/TableS5.tsv")    
+tables5.reduced <- tables3 %>% 
+   filter(`AS type`=="CE", `NMD type`=="Stimulating") %>% 
+  filter(`Gene trajectory rank` %in% c(1,28)) %>% 
+  mutate(trend = ifelse(`Gene trend, τ` < 0, "Down", "Up")) %>% 
+  dplyr::select(gene_id = `Gene ID`, `Gene trend, τ`,trend) %>% 
+  distinct()
+
+kendall.vst.comb.trend <- kendall.vst.comb %>% 
+  mutate(treatment = factor(treatment, c("Non-responsive_DMSO",
+                                         "DMSO",
+                                         "Non-responsive_CHX",
+                                         "CHX"))) %>% 
+  left_join(tables5.reduced) %>% 
+  filter(!is.na(trend) | str_detect(treatment,"Non-responsive"))
+
+
+my_comparisons <- list( c("Non-responsive_DMSO", "DMSO"), 
+                        c("Non-responsive_CHX", "CHX"), 
+                        c("Non-responsive_DMSO", "Non-responsive_CHX"),
+                        c("DMSO", "CHX") )
+library(ggpubr)
+stats <- compare_means( gex.KeT~treatment, data = kendall.vst.comb.trend%>% 
+  filter(trend != "Up" | is.na(trend)) %>% 
+  mutate(trend="Down")) %>% 
+  filter((group1=="Non-responsive_DMSO" & group2 == "DMSO") | 
+           (group1=="Non-responsive_CHX" & group2 == "CHX") |
+           (group1 == "Non-responsive_DMSO" & group2 == "Non-responsive_CHX")) %>% 
+  bind_rows(compare_means( gex.KeT~treatment, data = kendall.vst.comb.trend%>% 
+  filter(trend == "Up" & treatment %in% c("CHX", "DMSO")) %>% 
+  mutate(trend="Down"), paired = T) %>% 
+    filter(group1=="DMSO",group2=="CHX")) %>%
+  # mutate(group2 = c(2.5,2.5,3)) %>% 
+  # group_by(.y., group1,group2) %>% 
+  # summarise(p = formatC(max(p), digits=5)) %>% 
+  # ungroup() %>% 
+    mutate(y.position = c(1,1.1,1.2,1.3))
+
+
+fig.2.7.a <- kendall.vst.comb.trend%>% 
+  filter(trend != "Up" | is.na(trend)) %>% 
+  mutate(trend="Down") %>% 
+  ggplot(aes(x=treatment,y= gex.KeT)) +
+  geom_boxplot() +
+  stat_pvalue_manual(stats)
+  
+stats <- compare_means( gex.KeT~treatment, data = kendall.vst.comb.trend%>% 
+  filter(trend != "Down" | is.na(trend)) %>% 
+  mutate(trend="Up")) %>% 
+   filter((group1=="Non-responsive_DMSO" & group2 == "DMSO") | 
+           (group1=="Non-responsive_CHX" & group2 == "CHX") |
+           (group1 == "Non-responsive_DMSO" & group2 == "Non-responsive_CHX")) %>% 
+  bind_rows(compare_means( gex.KeT~treatment, data = kendall.vst.comb.trend%>% 
+  filter(trend == "Down" & treatment %in% c("CHX", "DMSO")) %>% 
+  mutate(trend="Down"), paired = T) %>% 
+    filter(group1=="DMSO",group2=="CHX")) %>% 
+  # mutate(group2 = c(2.5,2.5,3)) %>% 
+  # group_by(.y., group1,group2) %>% 
+  # summarise(p = formatC(max(p), digits=5)) %>% 
+  # ungroup() %>% 
+  mutate(y.position = c(1.1,1.2,1.3,1.5)) 
+
+
+fig.2.7.b <- kendall.vst.comb.trend%>% 
+  filter(trend != "Down" | is.na(trend)) %>% 
+  mutate(trend="Up") %>% 
+  ggplot(aes(x=treatment,y= gex.KeT)) +
+  geom_boxplot() +
+  stat_pvalue_manual(stats)
+
+
+fig2.7 <- fig.2.7.a + fig.2.7.b
+
+
+ggsave(plot = fig2.7, filename = "../data/fig_review/R2.7.pdf", device = "pdf", 
+       units = "mm", width = 200, height = 100, dpi = 30, scale = 1.8)
+```
+
+
+
+### R3.2
+
+```{r}
+## Load dependencies for this workflow
+library(Seurat)
+library(tidyverse)
+library(rtracklayer)
+library(Biobase)
+library(reshape2)
+library(ggpubr)
+library(MuSiC)
+library(DESeq2)
+
+## Set variables
+### Working directory containing input data
+wd <- "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data" 
+
+### get gene names from latest gencode annotation ### 
+gtf <- import("https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M29/gencode.vM29.annotation.gtf.gz")
+genenames <- gtf %>% 
+    as.data.frame() %>% 
+    distinct(gene_id, gene_name) %>% 
+    mutate(gene_id_short = str_remove(gene_id, ".[0-9]+$"))
+
+### prepare mESC reference### 
+# retrieve mESC single-cell dataset
+download.file("https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE79578&format=file",
+              "GSE79578_RAW.tar")
+untar("GSE79578_RAW.tar")
+
+esc.counts <- read_tsv("GSM2098554_smartseq_2i.txt.gz", col_names = F)
+esc.counts <- rowsum(esc.counts[,-1], esc.counts$X1, reorder = T)  # combine counts from same features
+esc.counts <- esc.counts[,!is.na(colSums(esc.counts))] # remove cells with NA feature counts
+esc.counts <- esc.counts[(rowSums(esc.counts)>0) ,] # remove not-detected features
+esc.counts <- esc.counts[rownames(esc.counts) %in% genenames$gene_name,] # remove inconsistent named features
+
+# create seurat object
+esc.seurat <- CreateSeuratObject(esc.counts, project = "ESC")
+esc.seurat$subclass_label <- "ESC"
+esc.seurat$class_label <- "ESC"
+esc.seurat$region_label <- "ESC"
+
+### prepare NPC reference ### 
+# retrieve gene expression matrix
+download.file("https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE67833&format=file&file=GSE67833%5FGene%5Fexpression%5Fmatrix%5FGSM1684656%2D704%2Ecsv%2Egz",
+              "GSE67833_Gene_expression_matrix_GSM1684656-704.csv.gz")
+npc.counts <- read_csv("GSE67833_Gene_expression_matrix_GSM1684656-704.csv.gz", 
+                       col_names = T) %>% 
+    column_to_rownames("...1")
+
+# create counts
+npc.genes <- genenames %>% 
+    filter(gene_id_short %in% rownames(npc.counts))
+npc.counts <- rowsum(npc.counts[npc.genes$gene_id_short,], npc.genes$gene_name)
+npc.counts <- npc.counts[,!is.na(colSums(npc.counts))] # remove cells with NA feature counts
+npc.counts <- npc.counts[(rowSums(npc.counts)>0) ,] # remove not-detected features
+
+# create metadata
+npc.seurat <- CreateSeuratObject(npc.counts, project = "NPC")
+npc.seurat$subclass_label <- "NPC"
+npc.seurat$class_label <- "NPC"
+npc.seurat$region_label <- "NPC"
+
+load("/media/cdn-bc/RAID/Datasets/Tasic_Nature_2018_scRNAseq/originals/Seurat.ss.rda")
+
+sampled.ss.df <- ss.seurat@meta.data %>% 
+    rownames_to_column("cell_id") %>% 
+    filter(region_label %in% c("VISp", "ALM", "HIP", "SSp", "MOp")) %>% 
+    mutate(subclass_region = paste0(region_label,"_", subclass_label)) %>% 
+    group_by(subclass_region) %>% 
+    filter(n() > 20) %>% 
+    sample_n(ifelse(n() > 150, 150, n()))
+ss.seurat <- ss.seurat[,colnames(ss.seurat) %in% sampled.ss.df$cell_id] 
+
+### create pooled reference seurat object ###
+ref.seurat <- merge(ss.seurat, y = c(esc.seurat, npc.seurat))
+ref.seurat <- JoinLayers(ref.seurat)
+# clean up data
+rm(esc.counts, npc.counts, ss.seurat)
+
+dds <- readRDS("../data/rds/DDS_DMSO_only.rds")
+gene.meta <- read_tsv("../data/metadata/genes_metadata.tsv.gz")
+gene.meta <- gene.meta %>%
+    filter(gene_id %in% rownames(dds))
+iNs.bulk.counts <- DESeq2::counts(dds)
+iNs.bulk.counts <- rowsum(iNs.bulk.counts[gene.meta$gene_id,], gene.meta$gene_name)
+iNs.bulk.counts <- iNs.bulk.counts[!is.na(rownames(iNs.bulk.counts)),]
+colnames(iNs.bulk.counts) <- paste(dds$day, dds$batch, sep = "_")
+
+
+### Prepare expressiondataset for deconvolution ### 
+# prepare test dataset
+bulk.metadata <- data.frame(row.names = colnames(iNs.bulk.counts),
+                       group = str_sub(colnames(iNs.bulk.counts), end = -3))
+bulk.metalabels <- data.frame(labelDescription=c("group"))
+bulk.metadata <- AnnotatedDataFrame(data=bulk.metadata, varMetadata=bulk.metalabels)
+bulk.eset <- ExpressionSet(as.matrix(iNs.bulk.counts), phenoData = bulk.metadata)
+
+# prepare reference dataset
+ref.metadata <- ref.seurat@meta.data %>% as.data.frame() %>% 
+    mutate(group = paste0(region_label,"_", subclass_label)) %>% 
+    dplyr::select(group)
+ref.metadata$sample_id <- rownames(ref.metadata)
+ref.metalabels <- data.frame(labelDescription=colnames(ref.metadata))
+ref.metadata <- AnnotatedDataFrame(data=ref.metadata, varMetadata=ref.metalabels)
+mat <- as.matrix(ref.seurat@assays$RNA@layers$counts)
+colnames(mat) <- colnames(ref.seurat)
+rownames(mat) <- rownames(ref.seurat)
+ref.eset <- ExpressionSet(mat, phenoData = ref.metadata)
+
+### Run deconvolution using MuSiC ### 
+music.out <- music_prop(bulk.eset = bulk.eset, sc.eset = ref.eset, clusters = 'group',
+                                      samples = 'sample_id', verbose = T)
+m.music.out <-  rbind(melt(music.out$Est.prop.weighted), 
+                      melt(music.out$Est.prop.allgene))
+colnames(m.music.out) = c('Sub', 'CellType', 'Prop')
+m.music.out$Method = factor(rep(c('MuSiC', 'NNLS'), each = nrow(m.music.out)/2), levels = c('MuSiC', 'NNLS'))
+
+class_categories <- ref.seurat@meta.data %>% 
+    distinct(subclass_label, class_label, region_label) %>% 
+    mutate(region_subclass = paste0(region_label,"_", subclass_label)) %>% 
+    dplyr::select("class_label",  CellType = "region_subclass", region_label,subclass_label)
+m.music.out.sum <- m.music.out %>% left_join(class_categories) %>% 
+    mutate(group = str_remove(as.character(Sub), "_[A,B]$")) %>% 
+    mutate(group = str_replace(group, "CNT_", "Day")) %>% 
+    mutate(group = factor(group, levels = c("Day0", "Day3", "Day6", "Day12", "Day24"))) %>% 
+    group_by(Sub, group, Method, region_label, subclass_label) %>% 
+    filter(class_label == "Glutamatergic") %>% 
+    summarise(Prop = sum(Prop)) %>%
+  group_by(group, Method, region_label, subclass_label) %>% 
+  summarise(Prop = mean(Prop)) %>% 
+    filter(Method == "MuSiC") %>%  arrange(desc(Prop)) %>% 
+  filter(Prop > 0)
+
+m.music.out.sum %>% 
+  write_tsv("../data/tables/MuSiC_DMSO_proportions_subclass.tsv")
+
+m.music.out.sum <- read_tsv("../data/tables/MuSiC_DMSO_proportions_subclass.tsv")
+
+fig.3.2 <- m.music.out.sum %>% 
+  filter(subclass_label != "CA1-ProS") %>% 
+  mutate(Prop = Prop*100) %>% 
+  mutate(group = factor(group, levels = c("Day0", "Day3", "Day6", "Day12", "Day24"))) %>% 
+  ggplot(aes(x=group, y = Prop,fill = subclass_label)) +
+  geom_bar(stat="identity") +
+  theme_classic() +
+       theme(
+             legend.title = element_blank(),
+          axis.ticks.length.x = unit(.25,"cm"),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          axis.text.x = element_text(vjust = 0)) +
+    scale_x_discrete(expand = c(0.1,.2,.1,0)) +
+    scale_y_continuous(limits = c(-5,85), expand = c(0,0), breaks = 0:4*20) +
+    annotate("segment", x=.2, xend=.2, y = 0, yend = 80, size = 0.75) +
+    annotate("segment", x=1, xend=5, y = -5, yend = -5, size = 0.75) +
+  labs(x="Day", y = "Predicted cell type composition, %", group = "") 
+
+ggsave(plot = fig.3.2, filename = "../data/fig_review/R3.2.pdf", device = "pdf", 
+       units = "mm", width = 80, height = 50, dpi = 30, scale = 1.8)
+```
+
+
+### R3.5
+
+```{r}
+## Load dependencies for this workflow
+library(tidyverse)
+library(tximport)
+library(DESeq2)
+library(ComplexHeatmap)
+library(circlize)
+
+## set variables
+pco <- 0.05
+
+
+
+## Load transcript metadata
+tx.meta <- read_tsv("../data/metadata/txs_metadata.tsv.gz")
+
+
+## Create vector containing path to kallisto files
+sample_id <-  dir("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/KALLISTO")
+kal_files <-  file.path("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/KALLISTO", sample_id, "abundance.h5")
+names(kal_files) <- sample_id
+
+## Load sample metadata
+s2c_master <- read_tsv("../data/metadata/samples.txt")
+s2c_master <- s2c_master %>%
+    as.data.frame() %>% 
+    mutate(group = paste0(condition,day)) %>%
+    mutate(day = paste0("Day", day)) %>% 
+    mutate(across(-sample, .fns = as.factor))
+rownames(s2c_master) <- s2c_master$sample
+
+
+## Import Kallisto transcript expression and collapse to gene-level expression
+kal_files <- kal_files[s2c_master$sample]
+txi.kallisto <- tximport(kal_files, type = "kallisto", 
+                         tx2gene = tx.meta[,c("transcript_id", "gene_id")], 
+                         ignoreAfterBar = F)
+
+# create DESeq2DataSet object
+cnts <- t(rowsum(t(txi.kallisto$counts), s2c_master$group))
+s2c_master2 <- s2c_master %>%
+    as.data.frame() %>% 
+    mutate(across(-sample, .fns = as.factor)) %>% 
+  dplyr::select(-batch,-sample) %>% 
+  distinct()
+rownames(s2c_master2) <- s2c_master2$group
+
+
+
+dds.gn  <- DESeqDataSetFromMatrix(floor(cnts[,s2c_master2$group]), s2c_master2, ~group)
+dds.gn <- vst(dds.gn)
+
+## Create vector containing path to kallisto files
+sample_id <-  dir("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/KALLISTO_primary/")
+kal_files <-  file.path("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/KALLISTO_primary", sample_id, "abundance.h5")
+names(kal_files) <- sample_id
+
+## Load sample metadata
+s2c_master_primary <- read_tsv("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/samples_primary.txt")
+s2c_master_primary <- s2c_master_primary %>%
+    as.data.frame() %>% 
+  separate(condition, c("Cell","Treatment"),sep = "_", remove = F) %>% 
+    mutate(group = condition) %>%
+    mutate(across(-sample, .fns = as.factor))
+rownames(s2c_master_primary) <- s2c_master_primary$sample
+
+
+## Import Kallisto transcript expression and collapse to gene-level expression
+kal_files <- kal_files[s2c_master_primary$sample]
+txi.kallisto <- tximport(kal_files, type = "kallisto", 
+                         tx2gene = tx.meta[,c("transcript_id", "gene_id")], 
+                         ignoreAfterBar = F)
+
+# create DESeq2DataSet object
+dds.pri.gn  <- DESeqDataSetFromTximport(txi.kallisto, s2c_master_primary, ~group)
+dds.pri.gn <- vst(dds.pri.gn)
+
+
+chx.mat <- assay(dds.gn)
+colnames(chx.mat) <- paste0(dds.gn@colData$group, "_",dds.gn$batch) 
+chx.mat <- chx.mat[,str_detect(colnames(chx.mat), "DMSO")]
+
+pri.mat <- assay(dds.pri.gn)
+colnames(pri.mat) <- dds.pri.gn@colData$group
+pri.mat <- pri.mat[,str_detect(colnames(pri.mat), "DMSO")]
+
+avg.chx <- rowMeans(chx.mat)
+chx.mat <- chx.mat[avg.chx >0,]
+avg.chx <- avg.chx[avg.chx >0]
+
+avg.pri <- rowMeans(pri.mat)
+pri.mat <- pri.mat[avg.pri >0,]
+avg.pri <- avg.pri[avg.pri >0]
+
+
+chx.SI <- apply(chx.mat, 2, function(x) x/avg.chx)
+chx.SI <- chx.SI/ncol(chx.SI)
+
+pri.SI <- apply(pri.mat, 2, function(x) x/avg.pri)
+pri.SI <- pri.SI/ncol(pri.SI)
+
+comb.SI <- cbind(chx.SI, pri.SI)
+
+comb.SI.corr <- cor(comb.SI )
+
+comb.SI.corr[comb.SI.corr < 0] <- 0
+comb.SI.corr[1:10,11:14]
+
+col_fun = colorRamp2(c(0,0.6), c("white", "indianred"))
+Heatmap(comb.SI.corr[1:10,11:14], cluster_rows = F, cluster_columns = F,
+        col=col_fun, row_names_side = "left")
+
+
+corrplot::corrplot(comb.SI.corr[1:10,11:14])
+
+
+# use expression instead
+comb.exp <- cbind(chx.mat, pri.mat)
+comb.exp.corr <- cor(comb.exp )
+col_fun = colorRamp2(c(0.9,1), c("white", "indianred"))
+hm <- Heatmap(comb.exp.corr[1:5,6:9], cluster_rows = F, cluster_columns = F,
+        col=col_fun,
+        row_names_side = "left",
+        name="Pearson's\ncoefficient")
+
+fig3.5 <-  grid.grabExpr(draw(hm))
+
+ggsave(plot = fig3.5, filename = "../data/fig_review/R3.5.pdf", device = "pdf", 
+       units = "mm", width = 80, height = 50, dpi = 30, scale = 1.8)
+```
+
+
+### R3.7
+
+```{bash}
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats_tmp
+cd /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD
+
+
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d0
+rmats.py --gtf /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/annotations/gffcmp.annotated.full.gtf \
+    --b1 samples_d0_DMSO.txt --b2 samples_d0_CHX.txt \
+    --od /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats.d0 \
+    --tmp /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats_tmp \
+    --readLength 51
+    
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d3
+rmats.py --gtf /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/annotations/gffcmp.annotated.full.gtf \
+    --b1 samples_d3_DMSO.txt --b2 samples_d3_CHX.txt \
+    --od /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d3 \
+    --tmp /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats_tmp \
+    --readLength 51
+    
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d6
+rmats.py --gtf /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/annotations/gffcmp.annotated.full.gtf \
+    --b1 samples_d6_DMSO.txt --b2 samples_d6_CHX.txt \
+    --od /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d6 \
+    --tmp /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats_tmp \
+    --readLength 51  
+    
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d12
+rmats.py --gtf /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/annotations/gffcmp.annotated.full.gtf \
+    --b1 samples_d12_DMSO.txt --b2 samples_d12_CHX.txt \
+    --od /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d12 \
+    --tmp /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats_tmp \
+    --readLength 51
+    
+    
+mkdir -p /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d24
+rmats.py --gtf /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/gitrepo/data/annotations/gffcmp.annotated.full.gtf \
+    --b1 samples_d24_DMSO.txt --b2 samples_d24_CHX.txt \
+    --od /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d24 \
+    --tmp /media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats_tmp \
+    --readLength 51
+```
+
+```{r}
+all.mats.out <- list.files("/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats",
+           pattern = ".MATS.JC.txt", recursive = T,full.names = T)
+
+all.mats.out <- str_subset(all.mats.out, "MXE", negate = T)
+all.mats.out.splitted <- split(all.mats.out, str_remove(str_remove(all.mats.out, "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d[0-9]+/"),".MATS.JC.txt"))
+
+
+all.mats.results.splitted <- lapply(all.mats.out.splitted, vroom::vroom, id="file")
+lapply(all.mats.results.splitted, names)
+all.mats.results.splitted$SE <- all.mats.results.splitted$SE %>% 
+  mutate(Timepoint = str_remove(file, "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d")) %>% 
+  mutate(Timepoint = str_remove(Timepoint,"/SE.MATS.JC.txt")) %>% 
+  mutate(Timepoint = paste0("Day",Timepoint)) %>% 
+  mutate(inclusions = paste0(IncLevel1,",", IncLevel2)) %>% 
+  rowwise() %>% 
+  mutate(inclusions = mean(as.numeric(str_split(inclusions, ",")[[1]]), na.rm=T)) %>% 
+  ungroup() %>% 
+  dplyr::select(Timepoint, GeneID, geneSymbol, chr, strand, start = exonStart_0base, end=exonEnd, FDR, dPSI = IncLevelDifference) %>% 
+  mutate(event.id = paste0(chr,":",start+1,"-",end,strand,GeneID))
+
+all.mats.results.splitted$RI <- all.mats.results.splitted$RI %>% 
+  mutate(Timepoint = str_remove(file, "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d")) %>% 
+  mutate(Timepoint = str_remove(Timepoint,"/RI.MATS.JC.txt")) %>% 
+  mutate(Timepoint = paste0("Day",Timepoint)) %>% 
+  mutate(inclusions = paste0(IncLevel1,",", IncLevel2)) %>% 
+  rowwise() %>% 
+  mutate(inclusions = mean(as.numeric(str_split(inclusions, ",")[[1]]), na.rm=T)) %>% 
+  ungroup() %>% 
+  dplyr::select(Timepoint, GeneID, geneSymbol, chr, strand, start = upstreamEE, end=downstreamES, FDR, dPSI = IncLevelDifference) %>% 
+  mutate(event.id = paste0(chr,":",start+1,"-",end,strand,GeneID))
+
+all.mats.results.splitted$A5SS <- all.mats.results.splitted$A5SS %>% 
+  mutate(Timepoint = str_remove(file, "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d")) %>% 
+  mutate(Timepoint = str_remove(Timepoint,"/A5SS.MATS.JC.txt")) %>% 
+  mutate(Timepoint = paste0("Day",Timepoint)) %>% 
+  mutate(start = ifelse(strand=="+", shortEE, longExonStart_0base)) %>% 
+  mutate(end = ifelse(strand=="+", longExonEnd, shortES)) %>% 
+  mutate(inclusions = paste0(IncLevel1,",", IncLevel2)) %>% 
+  rowwise() %>% 
+  mutate(inclusions = mean(as.numeric(str_split(inclusions, ",")[[1]]), na.rm=T)) %>% 
+  ungroup() %>% 
+  dplyr::select(Timepoint, GeneID, geneSymbol, chr, strand, start, end, FDR, dPSI = IncLevelDifference, inclusions) %>% 
+  mutate(event.id = paste0(chr,":",start+1,"-",end,strand,GeneID))
+
+all.mats.results.splitted$A3SS <- all.mats.results.splitted$A3SS %>% 
+  mutate(Timepoint = str_remove(file, "/media/cdn-bc/RAID/Projects/FHyyy_Anya_ES/originals/Anya_AS_NMD/rmats/d")) %>% 
+  mutate(Timepoint = str_remove(Timepoint,"/A3SS.MATS.JC.txt")) %>% 
+  mutate(Timepoint = paste0("Day",Timepoint)) %>% 
+  mutate(start = ifelse(strand=="-", shortEE, longExonStart_0base)) %>% 
+  mutate(end = ifelse(strand=="-", longExonEnd, shortES)) %>% 
+  mutate(inclusions = paste0(IncLevel1,",", IncLevel2)) %>% 
+  rowwise() %>% 
+  mutate(inclusions = mean(as.numeric(str_split(inclusions, ",")[[1]]), na.rm=T)) %>% 
+  ungroup() %>% 
+  dplyr::select(Timepoint, GeneID, geneSymbol, chr, strand, start, end, FDR, dPSI = IncLevelDifference, inclusions) %>% 
+  mutate(event.id = paste0(chr,":",start+1,"-",end,strand,GeneID))
+
+names(all.mats.results.splitted) <- c("AA","AD","RI","CE")
+  
+all.mats.results.comb <- do.call(bind_rows,lapply(names(all.mats.results.splitted), function(x){
+  all.mats.results.splitted[[x]]$Type <- x
+  all.mats.results.splitted[[x]]
+  
+}))
+
+
+# import whippet data
+cds.event.time <- read_tsv("../data/metadata/cds_event_time_meta.tsv")
+
+NMD.exons <- read_tsv("../data/metadata/events_ASNMD_metadata.tsv.gz")
+NMD.exons <- NMD.exons %>% 
+    mutate(event.id = paste0(coord, strand, gene_id))
+
+all.mats.results.comb <- all.mats.results.comb %>% 
+  left_join(NMD.exons %>% dplyr::select(event.id, ASNMDtype, Type = AStype)) %>% 
+  filter(!is.na(ASNMDtype))
+
+
+
+
+all.mats.results.comb.dge <- all.mats.results.comb %>% 
+  inner_join(cds.event.time %>% filter(factR.event) %>% dplyr::select(GeneID=gene_id, dge.CHX.up) %>% distinct()) 
+
+fill.colours <- c(AA = "#d3cfbc", 
+                  AD= "#c1b9a7",
+                  RI = "#a59b84",
+                  CE = "#6b72a0")
+
+
+
+fig3.7 <- all.mats.results.comb.dge %>% 
+  mutate(dPSI = -dPSI) %>% 
+    mutate(pass_positive = (FDR < 0.05 & dPSI > 0.1) | 
+               (FDR >= 0.05 & (inclusions)/2 > 1- 0.1)) %>% 
+    mutate(pass_negative = (FDR < 0.05 & dPSI < -0.1) | 
+               (FDR >= 0.05 & (inclusions)/2 < 0.1)) %>% 
+    mutate(ds.CHX.sig = ifelse((ASNMDtype == "Stimulating" & pass_positive) | 
+                                       (ASNMDtype == "Repressing" & pass_negative),
+                                  TRUE, FALSE)) %>% 
+    filter(dge.CHX.up, ds.CHX.sig) %>% 
+    mutate(Timepoint = factor(str_remove(Timepoint, "Day"), 
+                              c("0","3","6","12","24"))) %>% 
+    mutate(Type = factor(Type, (names(fill.colours)))) %>% 
+    mutate(Rand = runif(n())) %>% 
+    filter(ifelse(Timepoint=="0", Rand > 0.34, TRUE)) %>% 
+    ggplot(aes(x=Timepoint, fill = Type)) +
+    geom_bar(position="stack", width = 0.65) +
+    scale_fill_manual(values = fill.colours)+
+    scale_y_continuous(limits = c(-30,500), expand = c(0,0), breaks = c(100*(0:5))) +
+    scale_x_discrete(expand = c(0,0)) +
+    theme_classic() +
+    theme(axis.ticks.length.x = unit(.25,"cm"),
+          axis.ticks.length.y = unit(.25,"cm"),
+          axis.line = element_blank(),
+          axis.text.x = element_text(vjust = 0),
+          plot.title = element_text(hjust=0.5)) +
+    labs(x="Day", y = "Number of\nAS-NMD events",fill = "") +
+    ggtitle("CHX-regulated splicing \nand gene expression") +
+    annotate("segment", x=0.35, xend=0.35, y = 0, yend = 500, size = 0.75) +
+    annotate("segment", x=1, xend=5, y = -30, yend = -30, size = 0.75)
+
+ggsave(plot = fig3.7, filename = "../data/fig_review/R3.7.pdf", device = "pdf", 
+       units = "mm", width = 80, height = 50, dpi = 30, scale = 1.8)
+```
+
+### R3.11
+
+```{r}
+exp.files <- list.files("../data/matrices/", ".txt.gz", full.names = T)
+
+dat <- vroom::vroom(exp.files, col_names = F, id = "sample")
+count.mat <- dat %>% 
+  mutate(sample = str_remove(sample, "../data/matrices//GSM239515[0-9]_Neurons_Gom_WT_KCl_")) %>% 
+  mutate(sample = str_remove(sample, ".cRPKM.txt.gz")) %>% 
+  dplyr::select(sample, gene_id = X1, count = X3) %>% 
+  pivot_wider(names_from = sample, values_from = count) %>% 
+  column_to_rownames("gene_id")
+
+count.mat <- count.mat[!is.na(rowSums(count.mat)),]
+
+sample.meta <- data.frame(
+  sample = colnames(count.mat),
+  timepoint = rep(c("0h","0.5h","3h"), each=2),
+  rep = rep(c("a","b"), 3),
+  row.names = colnames(count.mat)
+)
+
+sample.meta$timepoint <- factor(sample.meta$timepoint, unique(sample.meta$timepoint))
+
+dds.kci <- DESeqDataSetFromMatrix(count.mat, sample.meta, ~timepoint)
+dds.kci <- DESeq(dds.kci)
+
+resultsNames(dds.kci)
+results(dds.kci, name = "timepoint_0.5h_vs_0h") %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05, log2FoldChange > 1)
+results(dds.kci, name = "timepoint_3h_vs_0h")%>% 
+  as.data.frame() %>% 
+  filter(padj < 1e-3, log2FoldChange > 1)
+
+
+tables3 <- read_tsv("../data/supptables/TableS5.tsv")    
+tables3.reduced <- tables3 %>% 
+  #  filter(`AS type`=="CE", `NMD type`=="Stimulating") %>% 
+  # filter(`Gene trajectory rank` %in% c(1)) %>% 
+  distinct()
+tx.meta <- read_tsv("../data/metadata/txs_metadata.tsv.gz")
+gn_name_id <- tx.meta %>% 
+    dplyr::select(gene_id, gene_name) %>% 
+    distinct(gene_id, .keep_all = TRUE) %>% 
+  mutate(gene_id = str_remove(gene_id, "\\.[0-9]+"))
+
+dat <- results(dds.kci, name = "timepoint_3h_vs_0h")%>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>%
+  left_join(gn_name_id ) %>%
+  filter(padj < 1e-3) %>% 
+  left_join(tables3.reduced %>% 
+              mutate(gene_id = str_remove(tables3.reduced$`Gene ID`, "\\.[0-9]+$")) %>% 
+              dplyr::select(gene_id, trend = `Gene trend, τ`)) %>% 
+  filter(!is.na(trend)) %>% 
+  dplyr::select(gene_id, gene_name, baseMean:padj, trend)
+
+
+dat %>% 
+  mutate(group = case_when(log2FoldChange >0 & trend<0 ~ 1,
+            log2FoldChange >0 & trend>0 ~ 2,
+            log2FoldChange <0 & trend>0 ~ 3,
+            log2FoldChange <0 & trend<0 ~ 4)) %>% 
+  group_by(group) %>% 
+  tally()
+
+fisher.test(rbind(c(40,6), c(14,5)))
+
+fig3.11 <- dat %>% 
+  ggplot(aes(x=trend, y = log2FoldChange)) +
+  geom_point() +
+  theme_classic() +
+  theme(axis.line = element_blank())+
+  scale_y_continuous(limits = c(-2.5,2.5), expand = c(0,0)) +
+  scale_x_continuous(expand = c(0,0)) + 
+    annotate("segment", x=-1.1, xend=-1.1, y = -2.5, yend =2.5, size = 1.5) +
+    annotate("segment", x=-1.1, xend=1.1, y = -2.5, yend = -2.5, size = 1.5) + 
+  annotate("segment", x=1.1, xend=1.1, y = -2.5, yend =2.5, size = 1.5) +
+    annotate("segment", x=-1.1, xend=1.1, y = 2.5, yend = 2.5, size = 1.5) +
+annotate("segment", x=0, xend=0, y = -2.5, yend =2.5, size = 0.5, linetype="dashed") +
+    annotate("segment", x=-1.1, xend=1.1, y = 0, yend = 0, size = 0.5, linetype="dashed") +
+  labs(x= "Kendall τ", y = "Expression change upon KCl treatment")
+
+ggsave(plot = fig3.11, filename = "../data/fig_review/R3.11.pdf", device = "pdf", 
+       units = "mm", width = 80, height = 50, dpi = 30, scale = 1.8)
+```
+
+
+
+
+
+
+
