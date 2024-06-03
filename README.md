@@ -1,4 +1,4 @@
-# Alternative splicing coupled to nonsense-mediated decay coordinates downregulation of non-neuronal genes in developing mouse neurons
+# Scripts for the analysis of alternative splicing and nonsense-mediated decay in developing mouse neurons
 
 This repository contains scripts used to generate the data
 presented in our manuscript. The codes for processing RNA-sequencing data
